@@ -3,13 +3,14 @@ service cloud.firestore {
   match /databases/{db}/documents {
     function me() { return get(/databases/$(db)/documents/users/$(request.auth.uid)).data; }
     function ok() { return request.auth != null && exists(/databases/$(db)/documents/users/$(request.auth.uid)); }
+    function member() { return ok() && me().role in ['admin','ppbk','capten','asisten','logistik']; }
     function boss() { return ok() && me().role in ['admin','ppbk']; }
     function staff() { return ok() && me().role in ['admin','ppbk','capten','asisten']; }
-    function mid(r) { return r in ['anggota','asisten','capten']; }
+    function mid(r) { return r in ['relawan','logistik','asisten','capten']; }
 
     match /users/{u} {
-      allow read: if request.auth != null;
-      allow create: if request.auth.uid == u && request.resource.data.role == 'anggota';
+      allow read: if request.auth != null && (request.auth.uid == u || member());
+      allow create: if request.auth.uid == u && request.resource.data.role == 'relawan';
       allow update: if boss()
         || (staff() && mid(resource.data.role) && mid(request.resource.data.role)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']));
@@ -19,25 +20,25 @@ service cloud.firestore {
       allow read: if ok();
       allow create, delete: if staff();
       allow update: if staff()
-        || (ok() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']));
+        || (member() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']));
     }
     match /tx/{t} {
-      allow read, create, update: if ok();
+      allow read, create, update: if member();
       allow delete: if boss();
     }
     match /requests/{r} {
-      allow read: if ok();
-      allow create: if ok() && request.resource.data.status == 'pending' && request.resource.data.by == request.auth.uid;
+      allow read: if member();
+      allow create: if member() && request.resource.data.status == 'pending' && request.resource.data.by == request.auth.uid;
       allow update, delete: if boss();
     }
     match /shopping/{s} {
-      allow read: if ok();
+      allow read: if member();
       allow create, delete: if boss();
       allow update: if staff();
     }
     match /notifs/{n} {
       allow read, update, delete: if ok() && resource.data.to == request.auth.uid;
-      allow create: if ok();
+      allow create: if member();
     }
   }
 }

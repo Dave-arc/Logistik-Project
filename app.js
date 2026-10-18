@@ -1,0 +1,270 @@
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ROLES={admin:'Admin',ppbk:'PPBK',capten:'Capten Logistik',asisten:'Asisten Capten',logistik:'Logistik',relawan:'Relawan Lain'};
+const URG={high:'High',normal:'Normal',low:'Low'},URGO={high:0,normal:1,low:2};
+const MID=['relawan','logistik','asisten','capten'];
+let auth,fs,me=null,unsubs=[],dataUn=[],started=false,firstSnap={};
+let items=[],txs=[],reqs=[],shop=[],users=[],notifs=[];
+let view='stok',scanMode='info',scanner=null,q='',pTab='req',lTab='riwayat',authMode='login',tm=null;
+const isBoss=()=>me&&['admin','ppbk'].includes(me.role);
+const isStaff=()=>me&&['admin','ppbk','capten','asisten'].includes(me.role);
+const isMember=()=>me&&me.role!=='relawan';
+const byId=id=>items.find(i=>i.id===id);
+const byCode=c=>items.find(i=>i.code.toLowerCase()===String(c).trim().toLowerCase());
+const isLow=i=>i.stock<=i.min;
+const fmt=t=>new Date(t).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+const safeUrl=u=>/^https?:\/\//i.test(u||'')?u:'';
+const uname=id=>(users.find(u=>u.id===id)||{}).name||'?';
+const err=e=>alert('Gagal: '+(e&&e.code==='permission-denied'?'kamu tidak punya izin untuk aksi ini.':(e&&e.message)||e));
+function nextCode(){let n=items.length+1,c;do{c='BRG-'+String(n++).padStart(4,'0')}while(byCode(c));return c}
+const usersWith=(...r)=>users.filter(u=>r.includes(u.role)&&u.id!==me.id).map(u=>u.id);
+const nfy=(b,uids,text)=>uids.forEach(u=>b.set(fs.collection('notifs').doc(),{to:u,text,at:Date.now(),read:false}));
+
+/* ---------- BOOT & AUTH ---------- */
+function boot(){
+  if(!FIREBASE_CONFIG.projectId){$('#app').innerHTML='<div class="card"><h1>Firebase belum diatur</h1><p>Buka <code>config.js</code>, isi <code>FIREBASE_CONFIG</code> di bagian atas script dengan config dari Firebase Console, lalu muat ulang.</p></div>';return}
+  firebase.initializeApp(FIREBASE_CONFIG);auth=firebase.auth();fs=firebase.firestore();
+  auth.onAuthStateChanged(u=>{
+    stopAll();me=null;started=false;
+    if(!u){render();return}
+    unsubs.push(fs.doc('users/'+u.uid).onSnapshot(s=>{
+      if(!s.exists)return;const old=me&&me.role;me={id:s.id,...s.data()};
+      if(!started||old!==me.role){started=true;stopData();listen(u.uid)}render()
+    },err));
+  });
+  render();
+}
+function stopData(){dataUn.forEach(f=>f());dataUn=[];firstSnap={};items=[];txs=[];reqs=[];shop=[];users=[];notifs=[]}
+function stopAll(){unsubs.forEach(f=>f());unsubs=[];stopData()}
+function listen(uid){
+  const L=(name,query,set,onNew)=>dataUn.push(query.onSnapshot(s=>{
+    set(s.docs.map(d=>({id:d.id,...d.data()})));
+    if(onNew&&firstSnap[name])s.docChanges().forEach(c=>c.type==='added'&&onNew(c.doc.data()));
+    firstSnap[name]=true;rerender();
+  },e=>{console.warn(name,e);err(e.code==='permission-denied'?{message:'Tidak ada izin membaca "'+name+'". Pastikan Rules di Firebase sudah di-Publish.'}:e)}));
+  L('items',fs.collection('items'),d=>items=d);
+  isMember()&&L('tx',fs.collection('tx').orderBy('at','desc').limit(300),d=>txs=d);
+  isMember()&&L('reqs',fs.collection('requests'),d=>reqs=d);
+  isMember()&&L('shop',fs.collection('shopping'),d=>shop=d);
+  isMember()&&L('users',fs.collection('users'),d=>users=d);
+  isMember()&&L('notifs',fs.collection('notifs').where('to','==',uid),d=>notifs=d.sort((a,b)=>b.at-a.at),n=>{
+    try{if('Notification' in window&&Notification.permission==='granted')new Notification('Gudang',{body:n.text})}catch(e){}
+  });
+}
+function rerender(){clearTimeout(tm);tm=setTimeout(()=>{const a=document.activeElement;if(a&&a.tagName==='INPUT'&&$('#app').contains(a))return;render()},120)}
+function doAuth(){
+  const u=$('#a_user').value.trim().toLowerCase().replace(/[^a-z0-9._]/g,''),p=$('#a_pass').value;
+  if(!u||p.length<6)return alert('Isi username (huruf/angka) dan password minimal 6 karakter.');
+  const email=u+'@gudang.app';
+  if(authMode==='login')return auth.signInWithEmailAndPassword(email,p).catch(()=>alert('Username atau password salah.'));
+  const name=$('#a_name').value.trim();if(!name)return alert('Isi nama lengkap.');
+  auth.createUserWithEmailAndPassword(email,p).then(c=>fs.doc('users/'+c.user.uid).set({name,username:u,role:'relawan',at:Date.now()}))
+    .catch(e=>alert(e.code==='auth/email-already-in-use'?'Username sudah dipakai.':e.message));
+}
+function vAuth(){
+  const reg=authMode==='reg';
+  $('#app').innerHTML=`<h1>${reg?'Daftar akun':'Masuk'}</h1><div class="card">
+  ${reg?'<label>Nama lengkap</label><input id="a_name">':''}
+  <label>Username</label><input id="a_user" autocapitalize="none" autocomplete="username">
+  <label>Password (min. 6 karakter)</label><input id="a_pass" type="password" autocomplete="${reg?'new':'current'}-password">
+  <button class="btn p" onclick="doAuth()">${reg?'Daftar':'Masuk'}</button></div>
+  <button class="btn" onclick="authMode='${reg?'login':'reg'}';vAuth()">${reg?'Sudah punya akun? Masuk':'Belum punya akun? Daftar'}</button>
+  ${reg?'<p class="mt">Akun baru berperan Relawan Lain (hanya lihat stok & scan). Role diubah oleh Admin, PPBK, atau Capten.</p>':''}`;
+}
+
+/* ---------- RENDER ---------- */
+const MENU=[['stok','Stok',0],['scan','Scan',0],['pinjam','Dipinjam',1],['beli','Pembelian',1],['riwayat','Riwayat',1],['user','Pengguna',2]];
+const allowed=()=>MENU.filter(m=>m[2]===0||(m[2]===1&&isMember())||(m[2]===2&&isStaff()));
+const closeSide=()=>{$('#side').classList.remove('open');$('#scrim').hidden=true};
+function go(v){stopScan();view=v;closeSide();render()}
+$('#burger').onclick=()=>{$('#side').classList.add('open');$('#scrim').hidden=false};
+$('#scrim').onclick=closeSide;
+function render(){
+  if(!auth)return;
+  const on=!!me;
+  $('#side').hidden=!on;$('#top').hidden=!on;document.body.classList.toggle('in',on);
+  if(!on){$('#side').innerHTML='';return vAuth()}
+  if(!allowed().some(m=>m[0]===view))view='stok';
+  const un=notifs.filter(n=>!n.read).length,pend=isBoss()?reqs.filter(r=>r.status==='pending').length:0;
+  $('#burger').innerHTML='&#9776;'+(un?`<span class="dot">${un}</span>`:'');
+  $('#side').innerHTML=`<div><b>${esc(me.name)}</b><div class="mt">${esc(ROLES[me.role]||me.role)}</div></div>
+  <div class="menu">${allowed().map(m=>`<button class="${m[0]===view?'on':''}" onclick="go('${m[0]}')">${m[1]}${m[0]==='beli'&&pend?`<span class="dot">${pend}</span>`:''}</button>`).join('')}</div>
+  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}<button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
+  ({stok:vStok,scan:vScan,pinjam:vPinjam,beli:vBeli,riwayat:vRiwayat,user:vUser})[view]();
+}
+function openM(h){$('#mbox').innerHTML=h;$('#modal').hidden=false}
+function closeM(){$('#modal').hidden=true;$('#mbox').innerHTML=''}
+$('#modal').onclick=e=>{if(e.target.id==='modal')closeM()};
+
+/* ---------- NOTIFIKASI ---------- */
+function showNotifs(){closeSide();
+  const can='Notification' in window&&Notification.permission==='default';
+  openM(`<div class="row sp"><h1>Notifikasi</h1><button class="btn s" onclick="closeM()">Tutup</button></div>
+  ${can?'<button class="btn s" style="margin-bottom:10px" onclick="Notification.requestPermission().then(showNotifs)">Aktifkan pop-up notifikasi browser</button>':''}
+  ${notifs.slice(0,40).map(n=>`<div class="card" style="${n.read?'opacity:.6':''}">${esc(n.text)}<div class="mt">${fmt(n.at)}</div></div>`).join('')||'<div class="card mt">Belum ada notifikasi.</div>'}`);
+  const b=fs.batch();notifs.filter(n=>!n.read).forEach(n=>b.update(fs.doc('notifs/'+n.id),{read:true}));b.commit().catch(()=>{});
+}
+
+/* ---------- STOK ---------- */
+function vStok(){
+  const low=items.filter(isLow);
+  const list=items.filter(i=>(i.name+i.category+i.location+i.code).toLowerCase().includes(q.toLowerCase()));
+  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<button class="btn p" onclick="itemForm()">+ Barang</button>':''}</div>
+  ${low.length?`<div class="warn">${low.length} barang hampir habis: ${esc(low.slice(0,3).map(i=>i.name).join(', '))}${low.length>3?' dan lainnya':''}</div>`:''}
+  <input id="q" placeholder="Cari nama, kategori, lokasi, kode" value="${esc(q)}">
+  ${list.length?list.map(i=>`<div class="card ${isLow(i)?'low':''}">
+    <div class="row sp" onclick="detail('${i.id}')" style="cursor:pointer"><div><b>${esc(i.name)}</b><div class="mt">${esc(i.category||'Tanpa kategori')} · ${esc(i.location||'Lokasi belum diisi')}</div></div>
+    <span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}</span></div>
+    ${isMember()?`<div class="row" style="margin-top:8px"><button class="btn s" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn s" onclick="txForm('${i.id}','in')">Masuk</button></div>`:''}</div>`).join('')
+  :`<div class="card mt">${items.length?'Tidak ada barang yang cocok.':'Belum ada barang.'}</div>`}`;
+  const el=$('#q');el.oninput=()=>{q=el.value;vStok();const n=$('#q');n.focus();n.setSelectionRange(q.length,q.length)};
+}
+function itemForm(id){
+  const i=id?byId(id):{code:'',name:'',category:'',location:'',buyUrl:'',stock:0,min:5,unit:'pcs'};
+  openM(`<h1>${id?'Edit':'Tambah'} barang</h1>
+  <label>Nama barang</label><input id="f_name" value="${esc(i.name)}">
+  <label>Kategori</label><input id="f_cat" value="${esc(i.category)}">
+  <label>Lokasi penyimpanan</label><input id="f_loc" value="${esc(i.location)}">
+  <label>Link pembelian / toko</label><input id="f_url" value="${esc(i.buyUrl)}" placeholder="https://...">
+  <div class="row"><div style="flex:1"><label>Stok${id?'':' awal'}</label><input id="f_stock" type="number" min="0" value="${i.stock}" ${id?'disabled':''}></div>
+  <div style="flex:1"><label>Batas peringatan</label><input id="f_min" type="number" min="0" value="${i.min}"></div>
+  <div style="flex:1"><label>Satuan</label><input id="f_unit" value="${esc(i.unit)}"></div></div>
+  <label>Kode barcode/QR (kosong = otomatis)</label><input id="f_code" value="${esc(i.code)}">
+  <div class="row"><button class="btn p" onclick="saveItem('${id||''}')">Simpan</button><button class="btn" onclick="closeM()">Batal</button></div>`);
+}
+function saveItem(id){
+  const name=$('#f_name').value.trim();if(!name)return alert('Nama barang wajib diisi.');
+  const code=$('#f_code').value.trim()||nextCode(),dup=byCode(code);
+  if(dup&&dup.id!==id)return alert('Kode sudah dipakai barang "'+dup.name+'".');
+  const d={name,category:$('#f_cat').value.trim(),location:$('#f_loc').value.trim(),buyUrl:$('#f_url').value.trim(),min:+$('#f_min').value||0,unit:$('#f_unit').value.trim()||'pcs',code};
+  (id?fs.doc('items/'+id).update(d):fs.collection('items').add({...d,stock:Math.max(0,+$('#f_stock').value||0)})).then(closeM).catch(err);
+}
+function detail(id){
+  const i=byId(id);if(!i)return;const u=safeUrl(i.buyUrl);
+  openM(`<div class="row sp"><h1>${esc(i.name)}</h1><button class="btn s" onclick="closeM()">Tutup</button></div>
+  <div class="card"><div class="row sp"><span>Stok</span><span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}${isLow(i)?' · hampir habis':''}</span></div>
+  <p class="mt" style="margin:8px 0 0">Kategori: <b>${esc(i.category||'-')}</b><br>Lokasi: <b>${esc(i.location||'-')}</b><br>Batas peringatan: ${i.min} ${esc(i.unit)}<br>Beli di: ${u?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//,'').slice(0,50))}</a>`:esc(i.buyUrl||'-')}</p></div>
+  <div class="card" style="text-align:center"><div id="qr"></div><div class="mt">Kode: <b>${esc(i.code)}</b></div></div>
+  <div class="row">${isMember()?`<button class="btn p" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn p" onclick="txForm('${i.id}','in')">Masuk</button>`:''}
+  ${isStaff()?`<button class="btn" onclick="itemForm('${i.id}')">Edit</button><button class="btn d" onclick="delItem('${i.id}')">Hapus</button>`:''}</div>`);
+  try{new QRCode($('#qr'),{text:i.code,width:180,height:180})}catch(e){$('#qr').textContent='QR gagal dimuat.'}
+}
+function delItem(id){if(confirm('Hapus barang ini?'))fs.doc('items/'+id).delete().then(closeM).catch(err)}
+
+/* ---------- TRANSAKSI ---------- */
+function txForm(id,type){
+  const i=byId(id);if(!i)return;
+  openM(`<h1>${type==='out'?'Barang keluar':'Barang masuk'}</h1>
+  <div class="card"><b>${esc(i.name)}</b><div class="mt">Stok: ${i.stock} ${esc(i.unit)} · ${esc(i.location||'lokasi belum diisi')}</div></div>
+  <label>Jumlah (${esc(i.unit)})</label><input id="t_qty" type="number" min="1" value="1" inputmode="numeric">
+  <label>${type==='out'?'Dibawa oleh / keperluan':'Catatan (opsional)'}</label><input id="t_who">
+  ${type==='out'?'<label class="row" style="color:var(--tx)"><input id="t_ret" type="checkbox" style="width:22px;margin:0" checked> Akan dikembalikan (masuk checklist)</label><br>':''}
+  <div class="row"><button class="btn p" onclick="saveTx('${id}','${type}')">Simpan</button><button class="btn" onclick="closeM()">Batal</button></div>`);
+  setTimeout(()=>{const e=$('#t_qty');e&&e.select()},50);
+}
+function saveTx(id,type){
+  const n=Math.floor(+$('#t_qty').value);if(!n||n<1)return alert('Isi jumlah minimal 1.');
+  const who=$('#t_who').value.trim(),ret=type==='out'&&$('#t_ret').checked,ref=fs.doc('items/'+id);let after=0,nm='',mn=0;
+  fs.runTransaction(async t=>{
+    const s=await t.get(ref),i=s.data();nm=i.name;mn=i.min;
+    if(type==='out'&&n>i.stock)throw new Error('Stok tidak cukup. Sisa '+i.stock+' '+i.unit+'.');
+    after=i.stock+(type==='in'?n:-n);t.update(ref,{stock:after});
+    t.set(fs.collection('tx').doc(),{itemId:id,itemName:i.name,unit:i.unit,type,qty:n,who,by:me.id,returnable:ret,returned:false,at:Date.now()});
+  }).then(()=>{closeM();if(type==='out'&&after<=mn)alert('Peringatan: stok '+nm+' tinggal '+after+'.')}).catch(err);
+}
+
+/* ---------- SCAN ---------- */
+function vScan(){
+  $('#app').innerHTML=`<h1>Scan barcode / QR</h1>
+  <div class="seg">${[['info','Lihat data'],['out','Keluar'],['in','Masuk']].filter(x=>isMember()||x[0]==='info').map(([k,l])=>`<button class="btn ${scanMode===k?'on':''}" onclick="scanMode='${k}';vScan()">${l}</button>`).join('')}</div>
+  <div id="reader"></div><div class="row"><button class="btn p" id="cam" onclick="startScan()">Buka kamera</button></div>
+  <div id="serr" class="mt" style="margin-top:8px">Kamera butuh HTTPS. Atau ketik kode manual:</div>
+  <div class="row" style="margin-top:6px"><input id="man" placeholder="mis. BRG-0001" style="flex:1;margin:0"><button class="btn" onclick="found($('#man').value)">Cari</button></div>`;
+}
+function startScan(){
+  if(typeof Html5Qrcode==='undefined')return $('#serr').textContent='Library scanner gagal dimuat.';
+  scanner=new Html5Qrcode('reader');
+  scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},t=>{stopScan();found(t)},()=>{})
+   .then(()=>{$('#cam').textContent='Matikan kamera';$('#cam').onclick=()=>{stopScan();vScan()}})
+   .catch(()=>{scanner=null;$('#serr').textContent='Kamera tidak bisa dibuka. Izinkan akses kamera (HTTPS), atau ketik kode manual.'});
+}
+function stopScan(){if(scanner){const s=scanner;scanner=null;s.stop().then(()=>s.clear()).catch(()=>{})}}
+function found(code){
+  const i=byCode(code);
+  if(!i){if(isStaff()&&confirm('Kode "'+code+'" belum terdaftar. Tambah sebagai barang baru?')){itemForm();setTimeout(()=>{$('#f_code').value=String(code).trim()},0)}else if(!isStaff())alert('Kode belum terdaftar.');return}
+  scanMode==='info'||!isMember()?detail(i.id):txForm(i.id,scanMode);
+}
+
+/* ---------- DIPINJAM ---------- */
+function vPinjam(){
+  const L=txs.filter(t=>t.type==='out'&&t.returnable),p=L.filter(t=>!t.returned),d=L.filter(t=>t.returned);
+  const row=t=>`<label class="card chk ${t.returned?'done':''}"><input type="checkbox" ${t.returned?'checked':''} onchange="toggleRet('${t.id}')"><div><b>${esc(t.itemName)}</b> × ${t.qty} ${esc(t.unit)}<div class="mt">${esc(t.who||'Tanpa keterangan')} · dicatat ${esc(uname(t.by))}, ${fmt(t.at)}${t.returned?' · kembali '+fmt(t.retAt):''}</div></div></label>`;
+  $('#app').innerHTML=`<h1>Checklist pengembalian</h1><p class="mt">Centang saat barang sudah kembali. Stok otomatis bertambah.</p>
+  <h2>Belum kembali (${p.length})</h2>${p.map(row).join('')||'<div class="card mt">Semua barang sudah kembali.</div>'}
+  ${d.length?`<h2>Sudah kembali (${d.length})</h2>${d.map(row).join('')}`:''}`;
+}
+function toggleRet(id){
+  const t=txs.find(x=>x.id===id),b=fs.batch(),back=!t.returned;
+  if(!back&&(byId(t.itemId)||{stock:0}).stock<t.qty){alert('Tidak bisa dibatalkan: stok kurang.');return render()}
+  b.update(fs.doc('tx/'+id),{returned:back,retAt:back?Date.now():null});
+  b.update(fs.doc('items/'+t.itemId),{stock:firebase.firestore.FieldValue.increment(back?t.qty:-t.qty)});
+  b.commit().catch(e=>{err(e);render()});
+}
+
+/* ---------- PEMBELIAN ---------- */
+const ub=u=>`<span class="bd ${u==='high'?'low':u==='normal'?'md':''}">${URG[u]}</span>`;
+function vBeli(){
+  const pend=reqs.filter(r=>r.status==='pending').length;
+  $('#app').innerHTML=`<div class="row sp"><h1>Pembelian</h1><button class="btn p" onclick="reqForm()">+ Permohonan</button></div>
+  <div class="seg"><button class="btn ${pTab==='req'?'on':''}" onclick="pTab='req';vBeli()">Permohonan${pend?` (${pend})`:''}</button><button class="btn ${pTab==='shop'?'on':''}" onclick="pTab='shop';vBeli()">List belanja</button></div>
+  <div id="pb"></div>`;
+  const pb=$('#pb');
+  if(pTab==='req'){
+    const L=[...reqs].sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1)||URGO[a.urgency]-URGO[b.urgency]||b.at-a.at);
+    pb.innerHTML=L.map(r=>{const u=safeUrl(r.link);return`<div class="card"><div class="row sp"><b>${esc(r.name)} × ${r.qty}</b>${ub(r.urgency)}</div>
+    <div class="mt">Oleh ${esc(uname(r.by))} · ${fmt(r.at)}${r.note?'<br>'+esc(r.note):''}${u?`<br><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">Link referensi</a>`:''}</div>
+    <div class="row" style="margin-top:8px">${r.status==='pending'?(isBoss()?`<button class="btn p s" onclick="decide('${r.id}',true)">Setujui</button><button class="btn d s" onclick="decide('${r.id}',false)">Tolak</button>`:'<span class="mt">Menunggu persetujuan PPBK</span>'):`<span class="bd ${r.status==='approved'?'':'low'}">${r.status==='approved'?'Disetujui':'Ditolak'}</span>`}</div></div>`}).join('')||'<div class="card mt">Belum ada permohonan.</div>';
+  }else{
+    const L=[...shop].sort((a,b)=>a.bought-b.bought||URGO[a.urgency]-URGO[b.urgency]||b.at-a.at);
+    pb.innerHTML=L.map(s=>{const u=safeUrl(s.link);return`<label class="card chk ${s.bought?'done':''}"><input type="checkbox" ${s.bought?'checked':''} ${isStaff()?'':'disabled'} onchange="fs.doc('shopping/${s.id}').update({bought:this.checked}).catch(err)"><div><b>${esc(s.name)}</b> × ${s.qty} ${ub(s.urgency)}<div class="mt">Diminta ${esc(uname(s.by))}${u?` · <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">link</a>`:''}</div></div></label>`}).join('')||'<div class="card mt">List belanja kosong. Permohonan yang disetujui masuk ke sini.</div>';
+  }
+}
+function reqForm(){
+  openM(`<h1>Permohonan pembelian</h1>
+  <label>Nama alat / barang</label><input id="r_name"><label>Jumlah</label><input id="r_qty" type="number" min="1" value="1">
+  <label>Urgensi</label><select id="r_urg"><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select>
+  <label>Link referensi (opsional)</label><input id="r_link" placeholder="https://..."><label>Catatan / alasan</label><textarea id="r_note" rows="2"></textarea>
+  <div class="row"><button class="btn p" onclick="saveReq()">Kirim</button><button class="btn" onclick="closeM()">Batal</button></div>`);
+}
+function saveReq(){
+  const name=$('#r_name').value.trim(),qty=Math.floor(+$('#r_qty').value);if(!name||qty<1)return alert('Isi nama barang dan jumlah.');
+  const urg=$('#r_urg').value,b=fs.batch();
+  b.set(fs.collection('requests').doc(),{name,qty,urgency:urg,link:$('#r_link').value.trim(),note:$('#r_note').value.trim(),by:me.id,status:'pending',at:Date.now()});
+  nfy(b,usersWith('ppbk'),`Permohonan baru (${URG[urg]}): ${name} × ${qty} dari ${me.name}`);
+  b.commit().then(()=>{closeM();pTab='req';render()}).catch(err);
+}
+function decide(id,ok){
+  const r=reqs.find(x=>x.id===id),b=fs.batch();
+  b.update(fs.doc('requests/'+id),{status:ok?'approved':'rejected',decidedBy:me.id});
+  if(ok){
+    b.set(fs.collection('shopping').doc(),{name:r.name,qty:r.qty,urgency:r.urgency,link:r.link,by:r.by,reqId:id,bought:false,at:Date.now()});
+    nfy(b,usersWith('capten','asisten'),`Disetujui & masuk list belanja: ${r.name} × ${r.qty} (${URG[r.urgency]})`);
+  }
+  if(r.by!==me.id)nfy(b,[r.by],`Permohonanmu "${r.name}" ${ok?'disetujui':'ditolak'}`);
+  b.commit().catch(err);
+}
+
+/* ---------- LAINNYA: RIWAYAT & PENGGUNA ---------- */
+function vRiwayat(){
+  $('#app').innerHTML='<h1>Riwayat</h1>'+(txs.slice(0,100).map(t=>`<div class="card"><div class="row sp"><b>${esc(t.itemName)}</b><span class="bd ${t.type==='out'?'low':''}">${t.type==='out'?'−':'+'}${t.qty} ${esc(t.unit)}</span></div><div class="mt">${t.type==='out'?'Keluar':'Masuk'} · ${fmt(t.at)} · ${esc(uname(t.by))}${t.who?' · '+esc(t.who):''}${t.returned?' · sudah kembali':''}</div></div>`).join('')||'<div class="card mt">Belum ada transaksi.</div>');
+}
+function vUser(){
+  $('#app').innerHTML='<h1>Pengguna</h1>'+users.map(u=>{
+    const can=isBoss()||(isStaff()&&MID.includes(u.role)),opts=isBoss()?Object.keys(ROLES):MID;
+    return`<div class="card row sp"><div><b>${esc(u.name)}</b><div class="mt">@${esc(u.username)}</div></div>${can?`<select style="width:auto;margin:0" onchange="setRole('${u.id}',this.value)">${opts.map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${ROLES[r]}</option>`).join('')}</select>`:`<span class="bd">${esc(ROLES[u.role]||u.role)}</span>`}</div>`}).join('');
+}
+function setRole(id,r){fs.doc('users/'+id).update({role:r}).catch(e=>{err(e);render()})}
+try{
+  if(typeof firebase==='undefined')throw new Error('Library Firebase gagal dimuat. Cek koneksi internet / matikan Shields Brave untuk situs ini.');
+  boot();
+}catch(e){$('#app').innerHTML='<div class="card"><b>Error:</b> '+esc(e.message)+'</div>'}
