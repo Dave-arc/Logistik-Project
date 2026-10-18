@@ -113,15 +113,38 @@ function vStok(){
   ${low.length?`<div class="warn">${low.length} barang hampir habis: ${esc(low.slice(0,3).map(i=>i.name).join(', '))}${low.length>3?' dan lainnya':''}</div>`:''}
   <input id="q" placeholder="Cari nama, kategori, lokasi, kode" value="${esc(q)}">
   ${list.length?list.map(i=>`<div class="card ${isLow(i)?'low':''}">
-    <div class="row sp" onclick="detail('${i.id}')" style="cursor:pointer"><div><b>${esc(i.name)}</b><div class="mt">${esc(i.category||'Tanpa kategori')} · ${esc(i.location||'Lokasi belum diisi')}</div></div>
+    <div class="row sp" onclick="detail('${i.id}')" style="cursor:pointer;flex-wrap:nowrap"><div class="row" style="flex-wrap:nowrap;gap:10px;min-width:0">${thumb(i)}<div><b>${esc(i.name)}</b><div class="mt">${esc(i.category||'Tanpa kategori')} · ${esc(i.location||'Lokasi belum diisi')}</div></div></div>
     <span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}</span></div>
     ${isMember()?`<div class="row" style="margin-top:8px"><button class="btn s" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn s" onclick="txForm('${i.id}','in')">Masuk</button></div>`:''}</div>`).join('')
   :`<div class="card mt">${items.length?'Tidak ada barang yang cocok.':'Belum ada barang.'}</div>`}`;
   const el=$('#q');el.oninput=()=>{q=el.value;vStok();const n=$('#q');n.focus();n.setSelectionRange(q.length,q.length)};
 }
+let pendingPhoto;
+const okPh=p=>typeof p==='string'&&/^data:image\/jpeg;base64,/.test(p);
+const thumb=i=>okPh(i.photo)?`<img class="th" src="${i.photo}" alt="">`:'<div class="th"></div>';
+const photoHtml=p=>okPh(p)?`<img class="th" style="width:76px;height:76px" src="${p}" alt="">`:'<div class="th" style="width:76px;height:76px"></div>';
+function pickPhoto(el){
+  const f=el.files[0];if(!f)return;
+  const img=new Image(),url=URL.createObjectURL(f);
+  img.onload=()=>{
+    const r=Math.min(1,640/Math.max(img.width,img.height)),c=document.createElement('canvas');
+    c.width=Math.round(img.width*r);c.height=Math.round(img.height*r);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);
+    pendingPhoto=c.toDataURL('image/jpeg',.72);$('#pvw').innerHTML=photoHtml(pendingPhoto);
+  };
+  img.onerror=()=>alert('Gambar tidak bisa dibaca.');
+  img.src=url;el.value='';
+}
+function clearPhoto(){pendingPhoto='';$('#pvw').innerHTML=photoHtml('')}
 function itemForm(id){
+  pendingPhoto=undefined;
   const i=id?byId(id):{code:'',name:'',category:'',location:'',buyUrl:'',stock:0,min:5,unit:'pcs'};
   openM(`<h1>${id?'Edit':'Tambah'} barang</h1>
+  <label>Foto barang</label>
+  <div class="row" style="margin:4px 0 12px;flex-wrap:nowrap"><div id="pvw">${photoHtml(i.photo)}</div>
+  <div class="row"><label class="btn s" style="margin:0;cursor:pointer;color:var(--tx)">Ambil foto<input type="file" accept="image/*" capture="environment" hidden onchange="pickPhoto(this)"></label>
+  <label class="btn s" style="margin:0;cursor:pointer;color:var(--tx)">Upload<input type="file" accept="image/*" hidden onchange="pickPhoto(this)"></label>
+  <button type="button" class="btn s d" onclick="clearPhoto()">Hapus</button></div></div>
   <label>Nama barang</label><input id="f_name" value="${esc(i.name)}">
   <label>Kategori</label><input id="f_cat" value="${esc(i.category)}">
   <label>Lokasi penyimpanan</label><input id="f_loc" value="${esc(i.location)}">
@@ -137,11 +160,13 @@ function saveItem(id){
   const code=$('#f_code').value.trim()||nextCode(),dup=byCode(code);
   if(dup&&dup.id!==id)return alert('Kode sudah dipakai barang "'+dup.name+'".');
   const d={name,category:$('#f_cat').value.trim(),location:$('#f_loc').value.trim(),buyUrl:$('#f_url').value.trim(),min:+$('#f_min').value||0,unit:$('#f_unit').value.trim()||'pcs',code};
+  if(pendingPhoto!==undefined)d.photo=pendingPhoto;
   (id?fs.doc('items/'+id).update(d):fs.collection('items').add({...d,stock:Math.max(0,+$('#f_stock').value||0)})).then(closeM).catch(err);
 }
 function detail(id){
   const i=byId(id);if(!i)return;const u=safeUrl(i.buyUrl);
   openM(`<div class="row sp"><h1>${esc(i.name)}</h1><button class="btn s" onclick="closeM()">Tutup</button></div>
+  ${okPh(i.photo)?`<img class="ph" src="${i.photo}" alt="">`:''}
   <div class="card"><div class="row sp"><span>Stok</span><span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}${isLow(i)?' · hampir habis':''}</span></div>
   <p class="mt" style="margin:8px 0 0">Kategori: <b>${esc(i.category||'-')}</b><br>Lokasi: <b>${esc(i.location||'-')}</b><br>Batas peringatan: ${i.min} ${esc(i.unit)}<br>Beli di: ${u?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//,'').slice(0,50))}</a>`:esc(i.buyUrl||'-')}</p></div>
   <div class="card" style="text-align:center"><div id="qr"></div><div class="mt">Kode: <b>${esc(i.code)}</b></div></div>
@@ -155,7 +180,7 @@ function delItem(id){if(confirm('Hapus barang ini?'))fs.doc('items/'+id).delete(
 function txForm(id,type){
   const i=byId(id);if(!i)return;
   openM(`<h1>${type==='out'?'Barang keluar':'Barang masuk'}</h1>
-  <div class="card"><b>${esc(i.name)}</b><div class="mt">Stok: ${i.stock} ${esc(i.unit)} · ${esc(i.location||'lokasi belum diisi')}</div></div>
+  <div class="card row" style="flex-wrap:nowrap">${thumb(i)}<div><b>${esc(i.name)}</b><div class="mt">Stok: ${i.stock} ${esc(i.unit)} · ${esc(i.location||'lokasi belum diisi')}</div></div></div>
   <label>Jumlah (${esc(i.unit)})</label><input id="t_qty" type="number" min="1" value="1" inputmode="numeric">
   <label>${type==='out'?'Dibawa oleh / keperluan':'Catatan (opsional)'}</label><input id="t_who">
   ${type==='out'?'<label class="row" style="color:var(--tx)"><input id="t_ret" type="checkbox" style="width:22px;margin:0" checked> Akan dikembalikan (masuk checklist)</label><br>':''}
