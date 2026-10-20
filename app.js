@@ -3,7 +3,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const ROLES={admin:'Admin',ppbk:'PPBK',capten:'Capten Logistik',asisten:'Asisten Capten',logistik:'Logistik',relawan:'Relawan Lain'};
 const URG={high:'High',normal:'Normal',low:'Low'},URGO={high:0,normal:1,low:2};
 const MID=['relawan','logistik','asisten','capten'];
-let auth,fs,me=null,unsubs=[],dataUn=[],started=false,firstSnap={};
+let auth,fs,me=null,unsubs=[],dataUn=[],started=false,ensuring=false,firstSnap={};
 let items=[],txs=[],reqs=[],shop=[],users=[],notifs=[];
 let view='stok',scanMode='info',scanner=null,q='',pTab='req',lTab='riwayat',authMode='login',tm=null;
 const isBoss=()=>me&&['admin','ppbk'].includes(me.role);
@@ -25,10 +25,10 @@ function boot(){
   if(!FIREBASE_CONFIG.projectId){$('#app').innerHTML='<div class="card"><h1>Firebase belum diatur</h1><p>Buka <code>config.js</code>, isi <code>FIREBASE_CONFIG</code> di bagian atas script dengan config dari Firebase Console, lalu muat ulang.</p></div>';return}
   firebase.initializeApp(FIREBASE_CONFIG);auth=firebase.auth();fs=firebase.firestore();
   auth.onAuthStateChanged(u=>{
-    stopAll();me=null;started=false;
+    stopAll();me=null;started=false;ensuring=false;
     if(!u){render();return}
     unsubs.push(fs.doc('users/'+u.uid).onSnapshot(s=>{
-      if(!s.exists)return;const old=me&&me.role;me={id:s.id,...s.data()};
+      if(!s.exists){if(u.providerData.some(p=>p.providerId==='google.com')&&!ensuring){ensuring=true;const em=u.email||'';fs.doc('users/'+u.uid).set({name:u.displayName||em.split('@')[0],username:em.split('@')[0],email:em,role:'relawan',at:Date.now()}).catch(err)}return}const old=me&&me.role;me={id:s.id,...s.data()};
       if(!started||old!==me.role){started=true;stopData();listen(u.uid)}render()
     },err));
   });
@@ -53,22 +53,65 @@ function listen(uid){
 }
 function rerender(){clearTimeout(tm);tm=setTimeout(()=>{const a=document.activeElement;if(a&&a.tagName==='INPUT'&&$('#app').contains(a))return;render()},120)}
 function doAuth(){
-  const u=$('#a_user').value.trim().toLowerCase().replace(/[^a-z0-9._]/g,''),p=$('#a_pass').value;
-  if(!u||p.length<6)return alert('Isi username (huruf/angka) dan password minimal 6 karakter.');
-  const email=u+'@gudang.app';
-  if(authMode==='login')return auth.signInWithEmailAndPassword(email,p).catch(()=>alert('Username atau password salah.'));
+  const id=$('#a_user').value.trim().toLowerCase(),p=$('#a_pass').value;
+  if(!id||p.length<6)return alert('Isi email/username dan password (minimal 6 karakter).');
+  if(authMode==='login'){
+    const email=id.includes('@')?id:id.replace(/[^a-z0-9._]/g,'')+'@gudang.app';
+    return auth.signInWithEmailAndPassword(email,p).catch(()=>alert('Email/username atau password salah.'));
+  }
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(id))return alert('Isi email yang valid (mis. nama@gmail.com).');
   const name=$('#a_name').value.trim();if(!name)return alert('Isi nama lengkap.');
-  auth.createUserWithEmailAndPassword(email,p).then(c=>fs.doc('users/'+c.user.uid).set({name,username:u,role:'relawan',at:Date.now()}))
-    .catch(e=>alert(e.code==='auth/email-already-in-use'?'Username sudah dipakai.':e.message));
+  auth.createUserWithEmailAndPassword(id,p).then(c=>fs.doc('users/'+c.user.uid).set({name,username:id.split('@')[0],email:id,role:'relawan',at:Date.now()}))
+    .catch(e=>alert(e.code==='auth/email-already-in-use'?'Email sudah terdaftar. Coba Masuk atau Lupa password.':e.message));
+}
+function doGoogle(){
+  const pv=new firebase.auth.GoogleAuthProvider();pv.setCustomParameters({prompt:'select_account'});
+  auth.signInWithPopup(pv).catch(e=>{
+    if(e.code==='auth/popup-blocked')return auth.signInWithRedirect(pv);
+    if(['auth/popup-closed-by-user','auth/cancelled-popup-request'].includes(e.code))return;
+    alert(e.code==='auth/unauthorized-domain'?'Domain ini belum diizinkan. Tambahkan di Firebase > Authentication > Settings > Authorized domains.':e.code==='auth/operation-not-allowed'?'Login Google belum diaktifkan di Firebase (Authentication > Sign-in method > Google).':'Gagal masuk dengan Google: '+e.message);
+  });
+}
+function forgotForm(){
+  openM(`<h1>Reset password</h1><p class="mt">Masukkan email akunmu. Tautan untuk membuat password baru akan dikirim ke email itu.</p>
+  <label>Email</label><input id="rs_email" type="email" autocapitalize="none">
+  <div class="row"><button class="btn p" onclick="doReset()">Kirim tautan</button><button class="btn" onclick="closeM()">Batal</button></div>`);
+}
+function doReset(){
+  const e=$('#rs_email').value.trim().toLowerCase();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))return alert('Isi email yang valid.');
+  if(e.endsWith('@gudang.app'))return alert('Akun ini memakai username tanpa email asli, jadi tautan tidak bisa dikirim. Masuk dengan Google bila sudah ditautkan, atau hubungi Admin.');
+  auth.sendPasswordResetEmail(e).then(()=>{closeM();alert('Jika email terdaftar, tautan reset sudah dikirim. Cek juga folder Spam.')}).catch(x=>alert('Gagal mengirim: '+x.message));
+}
+function showAccount(){
+  closeSide();
+  const u=auth.currentUser,ps=u.providerData.map(p=>p.providerId),hasPw=ps.includes('password'),hasG=ps.includes('google.com');
+  openM(`<div class="row sp"><h1>Akun saya</h1><button class="btn s" onclick="closeM()">Tutup</button></div>
+  <div class="card"><b>${esc(me.name)}</b><div class="mt">${esc(u.email||'')} &middot; ${esc(ROLES[me.role]||me.role)}</div><div class="mt">Masuk lewat: ${[hasPw?'Password':'',hasG?'Google':''].filter(Boolean).join(' + ')}</div></div>
+  ${hasPw?`<h2>Ganti password</h2><label>Password lama</label><input id="pw_old" type="password" autocomplete="current-password"><label>Password baru (min. 6 karakter)</label><input id="pw_new" type="password" autocomplete="new-password"><button class="btn p" onclick="changePw()">Simpan password</button>`:''}
+  ${hasG?'':`<h2>Tautkan Google</h2><p class="mt">Setelah ditautkan, kamu bisa masuk dengan Gmail tanpa kehilangan role dan data.</p><button class="btn" onclick="linkGoogle()">Tautkan akun Google</button>`}`);
+}
+function changePw(){
+  const o=$('#pw_old').value,n=$('#pw_new').value,u=auth.currentUser;
+  if(n.length<6)return alert('Password baru minimal 6 karakter.');
+  u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email,o)).then(()=>u.updatePassword(n))
+   .then(()=>{closeM();alert('Password berhasil diganti.')}).catch(e=>alert(['auth/wrong-password','auth/invalid-credential'].includes(e.code)?'Password lama salah.':'Gagal: '+e.message));
+}
+function linkGoogle(){
+  auth.currentUser.linkWithPopup(new firebase.auth.GoogleAuthProvider()).then(()=>{alert('Google berhasil ditautkan.');showAccount()})
+   .catch(e=>alert(e.code==='auth/credential-already-in-use'?'Akun Google itu sudah dipakai akun lain.':e.code==='auth/popup-closed-by-user'?'Dibatalkan.':'Gagal: '+e.message));
 }
 function vAuth(){
   const reg=authMode==='reg';
   $('#app').innerHTML=`<h1>${reg?'Daftar akun':'Masuk'}</h1><div class="card">
-  ${reg?'<label>Nama lengkap</label><input id="a_name">':''}
-  <label>Username</label><input id="a_user" autocapitalize="none" autocomplete="username">
-  <label>Password (min. 6 karakter)</label><input id="a_pass" type="password" autocomplete="${reg?'new':'current'}-password">
-  <button class="btn p" onclick="doAuth()">${reg?'Daftar':'Masuk'}</button></div>
-  <button class="btn" onclick="authMode='${reg?'login':'reg'}';vAuth()">${reg?'Sudah punya akun? Masuk':'Belum punya akun? Daftar'}</button>
+  ${reg?'<label>Nama lengkap</label><input id="a_name" autocomplete="name">':''}
+  <label>${reg?'Email (untuk reset password)':'Email atau username'}</label><input id="a_user" ${reg?'type="email"':''} autocapitalize="none" autocomplete="username">
+  <label>Password${reg?' (min. 6 karakter)':''}</label><input id="a_pass" type="password" autocomplete="${reg?'new':'current'}-password">
+  <button class="btn p" style="width:100%" onclick="doAuth()">${reg?'Daftar':'Masuk'}</button>
+  ${reg?'':'<p style="margin:10px 0 0;text-align:center"><a href="#" onclick="forgotForm();return false">Lupa password?</a></p>'}</div>
+  <div class="mt" style="text-align:center;margin:10px 0">atau</div>
+  <button class="btn" style="width:100%" onclick="doGoogle()">Masuk dengan Google</button>
+  <p style="text-align:center"><button class="btn s" onclick="authMode='${reg?'login':'reg'}';vAuth()">${reg?'Sudah punya akun? Masuk':'Belum punya akun? Daftar'}</button></p>
   ${reg?'<p class="mt">Akun baru berperan Relawan Lain (hanya lihat stok & scan). Role diubah oleh Admin, PPBK, atau Capten.</p>':''}`;
 }
 
@@ -89,7 +132,7 @@ function render(){
   $('#burger').innerHTML='&#9776;'+(un?`<span class="dot">${un}</span>`:'');
   $('#side').innerHTML=`<div><b>${esc(me.name)}</b><div class="mt">${esc(ROLES[me.role]||me.role)}</div></div>
   <div class="menu">${allowed().map(m=>`<button class="${m[0]===view?'on':''}" onclick="go('${m[0]}')">${m[1]}${m[0]==='beli'&&pend?`<span class="dot">${pend}</span>`:''}</button>`).join('')}</div>
-  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}<button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
+  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}<button class="btn s" onclick="showAccount()">Akun</button><button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
   ({stok:vStok,scan:vScan,pinjam:vPinjam,beli:vBeli,riwayat:vRiwayat,user:vUser})[view]();
 }
 function openM(h){$('#mbox').innerHTML=h;$('#modal').hidden=false}
@@ -109,7 +152,7 @@ function showNotifs(){closeSide();
 function vStok(){
   const low=items.filter(isLow);
   const list=items.filter(i=>(i.name+i.category+i.location+i.code).toLowerCase().includes(q.toLowerCase()));
-  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<div class="row"><button class="btn s" onclick="importForm()">Impor</button><button class="btn s" onclick="exportXlsx()">Ekspor</button><button class="btn p" onclick="itemForm()">+ Barang</button></div>':''}</div>
+  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<div class="row"><button class="btn s" onclick="importForm()">Impor</button><button class="btn s" onclick="exportXlsx()">Ekspor</button><button class="btn s" id="qrall" onclick="dlAllQr()">Unduh QR</button><button class="btn p" onclick="itemForm()">+ Barang</button></div>':''}</div>
   ${low.length?`<div class="warn">${low.length} barang hampir habis: ${esc(low.slice(0,3).map(i=>i.name).join(', '))}${low.length>3?' dan lainnya':''}</div>`:''}
   <input id="q" placeholder="Cari nama, kategori, lokasi, kode" value="${esc(q)}">
   ${list.length?list.map(i=>`<div class="card ${isLow(i)?'low':''}">
@@ -176,6 +219,38 @@ function exportXlsx(){
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Stok');
   XLSX.writeFile(wb,'stok-gudang-'+new Date().toISOString().slice(0,10)+'.xlsx');
 }
+/* ---------- UNDUH QR ---------- */
+const slug=s=>String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'barang';
+function qrCanvas(i){
+  const d=document.createElement('div');
+  new QRCode(d,{text:i.code,width:360,height:360,correctLevel:QRCode.CorrectLevel.M});
+  const q=d.querySelector('canvas'),pad=30,c=document.createElement('canvas'),x=c.getContext('2d');
+  c.width=360+pad*2;c.height=360+pad*2+76;
+  x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(q,pad,pad);
+  x.fillStyle='#000';x.textAlign='center';x.font='bold 26px Arial,sans-serif';
+  let n=i.name;while(x.measureText(n).width>c.width-30&&n.length>3)n=n.slice(0,-2);
+  if(n!==i.name)n=n.trim()+'…';
+  x.fillText(n,c.width/2,360+pad*2+8);
+  x.font='22px Arial,sans-serif';x.fillStyle='#444';x.fillText(i.code,c.width/2,360+pad*2+44);
+  return c;
+}
+const toBlob=c=>new Promise(r=>c.toBlob(r,'image/png'));
+function saveBlob(b,name){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+async function dlQr(id){
+  const i=byId(id);if(!i)return;
+  try{saveBlob(await toBlob(qrCanvas(i)),i.code+'-'+slug(i.name)+'.png')}catch(e){alert('QR gagal dibuat.')}
+}
+async function dlAllQr(){
+  if(!items.length)return alert('Belum ada barang.');
+  if(typeof JSZip==='undefined')return alert('Library ZIP gagal dimuat. Cek koneksi internet.');
+  const b=$('#qrall');b.disabled=true;b.textContent='Menyiapkan...';
+  try{
+    const z=new JSZip();
+    for(const i of items)z.file(i.code+'-'+slug(i.name)+'.png',await toBlob(qrCanvas(i)));
+    saveBlob(await z.generateAsync({type:'blob'}),'qr-semua-barang.zip');
+  }catch(e){alert('Gagal membuat ZIP.')}
+  b.disabled=false;b.textContent='Unduh QR';
+}
 let pendingPhoto;
 const okPh=p=>typeof p==='string'&&/^data:image\/jpeg;base64,/.test(p);
 const thumb=i=>okPh(i.photo)?`<img class="th" src="${i.photo}" alt="">`:'<div class="th"></div>';
@@ -226,7 +301,7 @@ function detail(id){
   ${okPh(i.photo)?`<img class="ph" src="${i.photo}" alt="">`:''}
   <div class="card"><div class="row sp"><span>Stok</span><span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}${isLow(i)?' · hampir habis':''}</span></div>
   <p class="mt" style="margin:8px 0 0">Kategori: <b>${esc(i.category||'-')}</b><br>Lokasi: <b>${esc(i.location||'-')}</b><br>Batas peringatan: ${i.min} ${esc(i.unit)}<br>Beli di: ${u?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//,'').slice(0,50))}</a>`:esc(i.buyUrl||'-')}</p></div>
-  <div class="card" style="text-align:center"><div id="qr"></div><div class="mt">Kode: <b>${esc(i.code)}</b></div></div>
+  <div class="card" style="text-align:center"><div id="qr"></div><div class="mt">Kode: <b>${esc(i.code)}</b></div><button class="btn s" style="margin-top:8px" onclick="dlQr('${i.id}')">Unduh QR (PNG)</button></div>
   <div class="row">${isMember()?`<button class="btn p" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn p" onclick="txForm('${i.id}','in')">Masuk</button>`:''}
   ${isStaff()?`<button class="btn" onclick="itemForm('${i.id}')">Edit</button><button class="btn d" onclick="delItem('${i.id}')">Hapus</button>`:''}</div>`);
   try{new QRCode($('#qr'),{text:i.code,width:180,height:180})}catch(e){$('#qr').textContent='QR gagal dimuat.'}
