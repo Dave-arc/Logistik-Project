@@ -109,7 +109,7 @@ function showNotifs(){closeSide();
 function vStok(){
   const low=items.filter(isLow);
   const list=items.filter(i=>(i.name+i.category+i.location+i.code).toLowerCase().includes(q.toLowerCase()));
-  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<button class="btn p" onclick="itemForm()">+ Barang</button>':''}</div>
+  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<div class="row"><button class="btn s" onclick="importForm()">Impor</button><button class="btn s" onclick="exportXlsx()">Ekspor</button><button class="btn p" onclick="itemForm()">+ Barang</button></div>':''}</div>
   ${low.length?`<div class="warn">${low.length} barang hampir habis: ${esc(low.slice(0,3).map(i=>i.name).join(', '))}${low.length>3?' dan lainnya':''}</div>`:''}
   <input id="q" placeholder="Cari nama, kategori, lokasi, kode" value="${esc(q)}">
   ${list.length?list.map(i=>`<div class="card ${isLow(i)?'low':''}">
@@ -118,6 +118,63 @@ function vStok(){
     ${isMember()?`<div class="row" style="margin-top:8px"><button class="btn s" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn s" onclick="txForm('${i.id}','in')">Masuk</button></div>`:''}</div>`).join('')
   :`<div class="card mt">${items.length?'Tidak ada barang yang cocok.':'Belum ada barang.'}</div>`}`;
   const el=$('#q');el.oninput=()=>{q=el.value;vStok();const n=$('#q');n.focus();n.setSelectionRange(q.length,q.length)};
+}
+/* ---------- IMPOR / EKSPOR EXCEL ---------- */
+const IMPMAP={name:['nama','nama barang','barang','item','name'],category:['kategori','category','jenis'],location:['lokasi','lokasi simpan','tempat','rak','location'],buyUrl:['link','link pembelian','link beli','url','toko','beli di'],stock:['stok','jumlah','qty','stock'],unit:['satuan','unit'],min:['batas','batas stok','batas peringatan','minimal','min'],code:['kode','kode barang','code','barcode','qr']};
+let impPlan=[];
+const sx=v=>/^[=+\-@]/.test(String(v))?"'"+v:v;
+function importForm(){
+  impPlan=[];
+  openM(`<div class="row sp"><h1>Impor dari Excel / CSV</h1><button class="btn s" onclick="closeM()">Tutup</button></div>
+  <p class="mt">Baris pertama harus berisi judul kolom, contoh: Nama, Kategori, Lokasi, Link, Stok, Satuan, Batas, Kode. Kolom Kode boleh kosong atau tidak ada: kode dibuat otomatis (BRG-0001, dst). Barang yang kode atau namanya sudah ada akan diperbarui, tidak digandakan.</p>
+  <input type="file" accept=".xlsx,.xls,.csv" onchange="readImport(this)"><div id="impv"></div>`);
+}
+function readImport(el){
+  const f=el.files[0];if(!f)return;
+  if(typeof XLSX==='undefined')return alert('Library Excel gagal dimuat. Cek koneksi internet.');
+  const r=new FileReader();
+  r.onload=()=>{try{const wb=XLSX.read(new Uint8Array(r.result),{type:'array'});planImport(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''}))}catch(e){alert('File tidak bisa dibaca.')}};
+  r.readAsArrayBuffer(f);
+}
+function planImport(rows){
+  const used=new Set(items.map(i=>i.code.toLowerCase())),seen=new Set();let n=items.length+1,skip=0;
+  const nc=()=>{let c;do{c='BRG-'+String(n++).padStart(4,'0')}while(used.has(c.toLowerCase()));used.add(c.toLowerCase());return c};
+  impPlan=[];
+  rows.forEach(row=>{
+    const o={};
+    Object.keys(row).forEach(k=>{const kk=String(k).trim().toLowerCase();for(const f in IMPMAP)if(IMPMAP[f].includes(kk)&&o[f]===undefined)o[f]=String(row[k]).trim()});
+    const key=(o.code||o.name||'').toLowerCase();
+    if(!o.name||seen.has(key)){skip++;return}
+    seen.add(key);
+    const ex=o.code?byCode(o.code):items.find(i=>i.name.toLowerCase()===o.name.toLowerCase());
+    let code=ex?ex.code:(o.code||nc());if(!ex&&o.code)used.add(o.code.toLowerCase());
+    impPlan.push({ex,o,code});
+  });
+  const nw=impPlan.filter(p=>!p.ex).length,up=impPlan.length-nw;
+  $('#impv').innerHTML=`<div class="card" style="margin-top:10px">Baru: <b>${nw}</b> &middot; Diperbarui: <b>${up}</b> &middot; Dilewati: <b>${skip}</b></div>
+  ${impPlan.slice(0,6).map(p=>`<div class="card row sp"><div><b>${esc(p.o.name)}</b><div class="mt">${esc(p.code)}</div></div><span class="bd ${p.ex?'md':''}">${p.ex?'Update':'Baru'}</span></div>`).join('')}
+  ${impPlan.length>6?`<p class="mt">dan ${impPlan.length-6} baris lainnya</p>`:''}
+  <label class="row" style="color:var(--tx);margin:8px 0 12px"><input type="checkbox" id="imp_stock" style="width:22px;margin:0"> Timpa stok barang yang sudah ada dengan angka dari file</label>
+  <button class="btn p" ${impPlan.length?'':'disabled'} onclick="doImport()">Impor ${impPlan.length} barang</button>`;
+}
+async function doImport(){
+  const ovr=$('#imp_stock').checked,ops=[];
+  const num=(v,d)=>v===undefined||v===''?d:Math.max(0,parseInt(String(v).replace(/[^\d]/g,''),10)||0);
+  impPlan.forEach(p=>{
+    const o=p.o;
+    if(p.ex){
+      const d={};['name','category','location','buyUrl','unit'].forEach(f=>{if(o[f])d[f]=o[f]});
+      if(o.min)d.min=num(o.min,0);if(ovr&&o.stock)d.stock=num(o.stock,0);
+      if(Object.keys(d).length)ops.push(b=>b.update(fs.doc('items/'+p.ex.id),d));
+    }else ops.push(b=>b.set(fs.collection('items').doc(),{name:o.name,category:o.category||'',location:o.location||'',buyUrl:o.buyUrl||'',unit:o.unit||'pcs',min:num(o.min,5),stock:num(o.stock,0),code:p.code}));
+  });
+  try{for(let i=0;i<ops.length;i+=400){const b=fs.batch();ops.slice(i,i+400).forEach(f=>f(b));await b.commit()}closeM();alert('Impor selesai: '+ops.length+' barang diproses.')}catch(e){err(e)}
+}
+function exportXlsx(){
+  if(typeof XLSX==='undefined')return alert('Library Excel gagal dimuat. Cek koneksi internet.');
+  const rows=items.map(i=>({Kode:sx(i.code),Nama:sx(i.name),Kategori:sx(i.category||''),Lokasi:sx(i.location||''),'Link Pembelian':sx(i.buyUrl||''),Stok:i.stock,Satuan:i.unit,'Batas Peringatan':i.min}));
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Stok');
+  XLSX.writeFile(wb,'stok-gudang-'+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 let pendingPhoto;
 const okPh=p=>typeof p==='string'&&/^data:image\/jpeg;base64,/.test(p);
