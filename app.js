@@ -6,6 +6,7 @@ const MID=['relawan','logistik','asisten','capten'];
 let auth,fs,me=null,unsubs=[],dataUn=[],started=false,ensuring=false,firstSnap={};
 let items=[],txs=[],reqs=[],shop=[],users=[],notifs=[];
 let view='stok',scanMode='info',scanner=null,q='',pTab='req',lTab='riwayat',authMode='login',tm=null;
+const isAdmin=()=>me&&me.role==='admin';
 const isBoss=()=>me&&['admin','ppbk'].includes(me.role);
 const isStaff=()=>me&&['admin','ppbk','capten','asisten'].includes(me.role);
 const isMember=()=>me&&me.role!=='relawan';
@@ -28,7 +29,7 @@ function boot(){
     stopAll();me=null;started=false;ensuring=false;
     if(!u){render();return}
     unsubs.push(fs.doc('users/'+u.uid).onSnapshot(s=>{
-      if(!s.exists){if(u.providerData.some(p=>p.providerId==='google.com')&&!ensuring){ensuring=true;const em=u.email||'';fs.doc('users/'+u.uid).set({name:u.displayName||em.split('@')[0],username:em.split('@')[0],email:em,role:'relawan',at:Date.now()}).catch(err)}return}const old=me&&me.role;me={id:s.id,...s.data()};
+      if(!s.exists){if(u.providerData.some(p=>p.providerId==='google.com')&&!ensuring){ensuring=true;const em=u.email||'';fs.doc('users/'+u.uid).set({name:u.displayName||em.split('@')[0],username:em.split('@')[0],email:em,role:'relawan',at:Date.now()}).catch(err)}render();return}const old=me&&me.role;me={id:s.id,...s.data()};
       if(!started||old!==me.role){started=true;stopData();listen(u.uid)}render()
     },err));
   });
@@ -116,7 +117,7 @@ function vAuth(){
 }
 
 /* ---------- RENDER ---------- */
-const MENU=[['stok','Stok',0],['scan','Scan',0],['pinjam','Dipinjam',1],['beli','Pembelian',1],['riwayat','Riwayat',1],['user','Pengguna',2]];
+const MENU=[['stok','Stok',0],['scan','Scan',0],['pinjam','Dipinjam',1],['beli','Pembelian',1],['riwayat','Riwayat',1],['user','Pengguna',1]];
 const allowed=()=>MENU.filter(m=>m[2]===0||(m[2]===1&&isMember())||(m[2]===2&&isStaff()));
 const closeSide=()=>{$('#side').classList.remove('open');$('#scrim').hidden=true};
 function go(v){stopScan();view=v;closeSide();render()}
@@ -126,7 +127,7 @@ function render(){
   if(!auth)return;
   const on=!!me;
   $('#side').hidden=!on;$('#top').hidden=!on;document.body.classList.toggle('in',on);
-  if(!on){$('#side').innerHTML='';return vAuth()}
+  if(!on){$('#side').innerHTML='';return auth.currentUser?vWait():vAuth()}
   if(!allowed().some(m=>m[0]===view))view='stok';
   const un=notifs.filter(n=>!n.read).length,pend=isBoss()?reqs.filter(r=>r.status==='pending').length:0;
   $('#burger').innerHTML='&#9776;'+(un?`<span class="dot">${un}</span>`:'');
@@ -383,7 +384,7 @@ function vBeli(){
     <div class="row" style="margin-top:8px">${r.status==='pending'?(isBoss()?`<button class="btn p s" onclick="decide('${r.id}',true)">Setujui</button><button class="btn d s" onclick="decide('${r.id}',false)">Tolak</button>`:'<span class="mt">Menunggu persetujuan PPBK</span>'):`<span class="bd ${r.status==='approved'?'':'low'}">${r.status==='approved'?'Disetujui':'Ditolak'}</span>`}</div></div>`}).join('')||'<div class="card mt">Belum ada permohonan.</div>';
   }else{
     const L=[...shop].sort((a,b)=>a.bought-b.bought||URGO[a.urgency]-URGO[b.urgency]||b.at-a.at);
-    pb.innerHTML=L.map(s=>{const u=safeUrl(s.link);return`<label class="card chk ${s.bought?'done':''}"><input type="checkbox" ${s.bought?'checked':''} ${isStaff()?'':'disabled'} onchange="fs.doc('shopping/${s.id}').update({bought:this.checked}).catch(err)"><div><b>${esc(s.name)}</b> × ${s.qty} ${ub(s.urgency)}<div class="mt">Diminta ${esc(uname(s.by))}${u?` · <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">link</a>`:''}</div></div></label>`}).join('')||'<div class="card mt">List belanja kosong. Permohonan yang disetujui masuk ke sini.</div>';
+    pb.innerHTML=L.map(s=>{const u=safeUrl(s.link);return`<label class="card chk ${s.bought?'done':''}"><input type="checkbox" ${s.bought?'checked':''} ${isMember()?'':'disabled'} onchange="fs.doc('shopping/${s.id}').update({bought:this.checked}).catch(err)"><div><b>${esc(s.name)}</b> × ${s.qty} ${ub(s.urgency)}<div class="mt">Diminta ${esc(uname(s.by))}${u?` · <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">link</a>`:''}</div></div></label>`}).join('')||'<div class="card mt">List belanja kosong. Permohonan yang disetujui masuk ke sini.</div>';
   }
 }
 function reqForm(){
@@ -397,7 +398,7 @@ function saveReq(){
   const name=$('#r_name').value.trim(),qty=Math.floor(+$('#r_qty').value);if(!name||qty<1)return alert('Isi nama barang dan jumlah.');
   const urg=$('#r_urg').value,b=fs.batch();
   b.set(fs.collection('requests').doc(),{name,qty,urgency:urg,link:$('#r_link').value.trim(),note:$('#r_note').value.trim(),by:me.id,status:'pending',at:Date.now()});
-  nfy(b,usersWith('ppbk'),`Permohonan baru (${URG[urg]}): ${name} × ${qty} dari ${me.name}`);
+  nfy(b,usersWith('ppbk','admin'),`Permohonan baru (${URG[urg]}): ${name} × ${qty} dari ${me.name}`);
   b.commit().then(()=>{closeM();pTab='req';render()}).catch(err);
 }
 function decide(id,ok){
@@ -415,12 +416,25 @@ function decide(id,ok){
 function vRiwayat(){
   $('#app').innerHTML='<h1>Riwayat</h1>'+(txs.slice(0,100).map(t=>`<div class="card"><div class="row sp"><b>${esc(t.itemName)}</b><span class="bd ${t.type==='out'?'low':''}">${t.type==='out'?'−':'+'}${t.qty} ${esc(t.unit)}</span></div><div class="mt">${t.type==='out'?'Keluar':'Masuk'} · ${fmt(t.at)} · ${esc(uname(t.by))}${t.who?' · '+esc(t.who):''}${t.returned?' · sudah kembali':''}</div></div>`).join('')||'<div class="card mt">Belum ada transaksi.</div>');
 }
+function vWait(){$('#app').innerHTML='<div class="card"><b>Menyiapkan akun...</b><p class="mt">Jika ini berlangsung lama, akunmu mungkin belum aktif atau sudah dihapus oleh Admin.</p><button class="btn" onclick="auth.signOut()">Keluar</button></div>'}
 function vUser(){
-  $('#app').innerHTML='<h1>Pengguna</h1>'+users.map(u=>{
-    const can=isBoss()||(isStaff()&&MID.includes(u.role)),opts=isBoss()?Object.keys(ROLES):MID;
-    return`<div class="card row sp"><div><b>${esc(u.name)}</b><div class="mt">@${esc(u.username)}</div></div>${can?`<select style="width:auto;margin:0" onchange="setRole('${u.id}',this.value)">${opts.map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${ROLES[r]}</option>`).join('')}</select>`:`<span class="bd">${esc(ROLES[u.role]||u.role)}</span>`}</div>`}).join('');
+  const list=users.filter(u=>isStaff()||u.role!=='relawan');
+  const opts=isAdmin()?Object.keys(ROLES):isBoss()?Object.keys(ROLES).filter(r=>r!=='admin'):MID;
+  $('#app').innerHTML='<h1>Pengguna</h1>'+(isStaff()?'':'<p class="mt">Hanya untuk dilihat. Role diubah oleh staf.</p>')+list.map(u=>{
+    const can=isAdmin()?u.id!==me.id:(u.role!=='admin'&&(isBoss()||(isStaff()&&MID.includes(u.role))));
+    return`<div class="card row sp"><div><b>${esc(u.name)}</b><div class="mt">@${esc(u.username)}</div></div><div class="row">${can?`<select style="width:auto;margin:0" onchange="setRole('${u.id}',this.value)">${opts.map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${ROLES[r]}</option>`).join('')}</select>`:`<span class="bd">${esc(ROLES[u.role]||u.role)}</span>`}${isAdmin()&&u.id!==me.id?`<button class="btn s d" onclick="delUser('${u.id}')">Hapus</button>`:''}</div></div>`}).join('');
 }
-function setRole(id,r){fs.doc('users/'+id).update({role:r}).catch(e=>{err(e);render()})}
+function delUser(id){
+  const u=users.find(x=>x.id===id);if(!u||!isAdmin())return;
+  if(!confirm('Hapus pengguna "'+u.name+'"? Akses ke data dicabut. Untuk menghapus loginnya secara permanen, hapus juga di Firebase > Authentication > Users.'))return;
+  fs.doc('users/'+id).delete().catch(err);
+}
+function setRole(id,r){
+  const u=users.find(x=>x.id===id)||{};
+  if(r==='admin'&&!isAdmin()){render();return}
+  if((r==='admin'||u.role==='admin')&&!confirm(r==='admin'?'Jadikan '+u.name+' sebagai Admin?':'Cabut role Admin dari '+u.name+'?')){render();return}
+  fs.doc('users/'+id).update({role:r}).catch(e=>{err(e);render()});
+}
 try{
   if(typeof firebase==='undefined')throw new Error('Library Firebase gagal dimuat. Cek koneksi internet / matikan Shields Brave untuk situs ini.');
   boot();

@@ -11,10 +11,15 @@ service cloud.firestore {
     match /users/{u} {
       allow read: if request.auth != null && (request.auth.uid == u || member());
       allow create: if request.auth.uid == u && request.resource.data.role == 'relawan';
-      allow update: if boss()
-        || (staff() && mid(resource.data.role) && mid(request.resource.data.role)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']));
-      allow delete: if ok() && me().role == 'admin';
+      // Hanya admin yang boleh memberi/mencabut role admin. Admin tidak bisa mengubah/menghapus dirinya sendiri.
+      allow update: if ok() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+        && (
+          (me().role == 'admin' && request.auth.uid != u
+            && request.resource.data.role in ['admin','ppbk','capten','asisten','logistik','relawan'])
+          || (resource.data.role != 'admin' && request.resource.data.role != 'admin'
+            && (me().role == 'ppbk' || (staff() && mid(resource.data.role) && mid(request.resource.data.role))))
+        );
+      allow delete: if ok() && me().role == 'admin' && request.auth.uid != u;
     }
     match /items/{i} {
       allow read: if ok();
@@ -34,7 +39,7 @@ service cloud.firestore {
     match /shopping/{s} {
       allow read: if member();
       allow create, delete: if boss();
-      allow update: if staff();
+      allow update: if member();
     }
     match /notifs/{n} {
       allow read, update, delete: if ok() && resource.data.to == request.auth.uid;
