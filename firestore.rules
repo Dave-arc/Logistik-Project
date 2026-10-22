@@ -46,6 +46,10 @@ service cloud.firestore {
       allow create, delete: if boss();
       allow update: if member();
     }
+    match /logs/{l} {
+      allow read: if boss();
+      allow create: if member() && request.resource.data.by == request.auth.uid;
+    }
     match /notifs/{n} {
       allow read, update, delete: if ok() && resource.data.to == request.auth.uid;
       allow create: if member();

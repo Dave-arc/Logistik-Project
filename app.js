@@ -4,9 +4,9 @@ const ROLES={admin:'Admin',ppbk:'PPBK',capten:'Capten Logistik',asisten:'Asisten
 const URG={high:'High',normal:'Normal',low:'Low'},URGO={high:0,normal:1,low:2};
 const MID=['relawan','logistik','asisten','capten'];
 let auth,fs,me=null,unsubs=[],dataUn=[],started=false,ensuring=false,firstSnap={};
-let items=[],pend=[],txs=[],reqs=[],shop=[],users=[],notifs=[];
+let items=[],pend=[],logs=[],txs=[],reqs=[],shop=[],users=[],notifs=[];
 let view='stok',scanMode='info',scanner=null,q='',pTab='req',lTab='riwayat',authMode='login',tm=null;
-let fCat='',fLoc='',fLow=false,fSort='name',cart=[],cartOn=false,lastScan={c:'',t:0};
+let fCat='',fLoc='',fLow=false,fSort='name',cart=[],cartOn=false,lastScan={c:'',t:0},dip=null,opn={},oq='';
 const isAdmin=()=>me&&me.role==='admin';
 const isBoss=()=>me&&['admin','ppbk'].includes(me.role);
 const isStaff=()=>me&&['admin','ppbk','capten','asisten'].includes(me.role);
@@ -20,6 +20,7 @@ const uname=id=>(users.find(u=>u.id===id)||{}).name||'?';
 const err=e=>alert('Gagal: '+(e&&e.code==='permission-denied'?'kamu tidak punya izin untuk aksi ini.':(e&&e.message)||e));
 function nextCode(){let n=items.length+1,c;do{c='BRG-'+String(n++).padStart(4,'0')}while(byCode(c));return c}
 const usersWith=(...r)=>users.filter(u=>r.includes(u.role)&&u.id!==me.id).map(u=>u.id);
+const lg=(text,b)=>{if(!me||!isMember())return;const d={at:Date.now(),by:me.id,byName:me.name,text};b?b.set(fs.collection('logs').doc(),d):fs.collection('logs').add(d).catch(()=>{})};
 const nfy=(b,uids,text)=>uids.forEach(u=>b.set(fs.collection('notifs').doc(),{to:u,text,at:Date.now(),read:false}));
 
 /* ---------- BOOT & AUTH ---------- */
@@ -36,7 +37,7 @@ function boot(){
   });
   render();
 }
-function stopData(){dataUn.forEach(f=>f());dataUn=[];firstSnap={};items=[];pend=[];txs=[];reqs=[];shop=[];users=[];notifs=[]}
+function stopData(){dataUn.forEach(f=>f());dataUn=[];firstSnap={};items=[];pend=[];logs=[];txs=[];reqs=[];shop=[];users=[];notifs=[]}
 function stopAll(){unsubs.forEach(f=>f());unsubs=[];stopData()}
 function listen(uid){
   const L=(name,query,set,onNew)=>dataUn.push(query.onSnapshot(s=>{
@@ -47,6 +48,7 @@ function listen(uid){
   L('items',fs.collection('items'),d=>items=d);
   isMember()&&L('tx',fs.collection('tx').orderBy('at','desc').limit(300),d=>txs=d);
   isMember()&&L('pend',fs.collection('tx').where('returnable','==',true).where('returned','==',false),d=>pend=d);
+  isBoss()&&L('logs',fs.collection('logs').orderBy('at','desc').limit(100),d=>logs=d);
   isMember()&&L('reqs',fs.collection('requests'),d=>reqs=d);
   isMember()&&L('shop',fs.collection('shopping'),d=>shop=d);
   isMember()&&L('users',fs.collection('users'),d=>users=d);
@@ -119,8 +121,8 @@ function vAuth(){
 }
 
 /* ---------- RENDER ---------- */
-const MENU=[['stok','Stok',0],['scan','Scan',0],['pinjam','Dipinjam',1],['beli','Pembelian',1],['riwayat','Riwayat',1],['user','Pengguna',1]];
-const allowed=()=>MENU.filter(m=>m[2]===0||(m[2]===1&&isMember())||(m[2]===2&&isStaff()));
+const MENU=[['dash','Ringkasan',1],['stok','Stok',0],['scan','Scan',0],['pinjam','Dipinjam',1],['beli','Pembelian',1],['riwayat','Riwayat',1],['opname','Stok opname',2],['user','Pengguna',1],['log','Log aktivitas',4]];
+const allowed=()=>MENU.filter(m=>m[2]===0||(m[2]===1&&isMember())||(m[2]===2&&isStaff())||(m[2]===4&&isBoss()));
 const closeSide=()=>{$('#side').classList.remove('open');$('#scrim').hidden=true};
 function go(v){stopScan();view=v;closeSide();render()}
 $('#burger').onclick=()=>{$('#side').classList.add('open');$('#scrim').hidden=false};
@@ -135,8 +137,8 @@ function render(){
   $('#burger').innerHTML='&#9776;'+(un?`<span class="dot">${un}</span>`:'');
   $('#side').innerHTML=`<div><b>${esc(me.name)}</b><div class="mt">${esc(ROLES[me.role]||me.role)}</div></div>
   <div class="menu">${allowed().map(m=>`<button class="${m[0]===view?'on':''}" onclick="go('${m[0]}')">${m[1]}${m[0]==='beli'&&pend?`<span class="dot">${pend}</span>`:''}</button>`).join('')}</div>
-  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}<button class="btn s" onclick="showAccount()">Akun</button><button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
-  ({stok:vStok,scan:vScan,pinjam:vPinjam,beli:vBeli,riwayat:vRiwayat,user:vUser})[view]();
+  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}${dip?`<button class="btn s" onclick="installApp()">Pasang aplikasi</button>`:''}<button class="btn s" onclick="showAccount()">Akun</button><button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
+  ({dash:vDash,stok:vStok,scan:vScan,pinjam:vPinjam,beli:vBeli,riwayat:vRiwayat,opname:vOpname,user:vUser,log:vLog})[view]();
 }
 function openM(h){$('#mbox').innerHTML=h;$('#modal').hidden=false}
 function closeM(){$('#modal').hidden=true;$('#mbox').innerHTML=''}
@@ -220,6 +222,7 @@ async function doImport(){
       if(Object.keys(d).length)ops.push(b=>b.update(fs.doc('items/'+p.ex.id),d));
     }else ops.push(b=>b.set(fs.collection('items').doc(),{name:o.name,category:o.category||'',location:o.location||'',buyUrl:o.buyUrl||'',unit:o.unit||'pcs',min:num(o.min,5),stock:num(o.stock,0),code:p.code}));
   });
+  lg('Impor Excel: '+ops.length+' barang diproses');
   try{for(let i=0;i<ops.length;i+=400){const b=fs.batch();ops.slice(i,i+400).forEach(f=>f(b));await b.commit()}closeM();alert('Impor selesai: '+ops.length+' barang diproses.')}catch(e){err(e)}
 }
 function exportXlsx(){
@@ -259,6 +262,43 @@ async function dlAllQr(){
     saveBlob(await z.generateAsync({type:'blob'}),'qr-semua-barang.zip');
   }catch(e){alert('Gagal membuat ZIP.')}
   b.disabled=false;b.textContent='Unduh QR';
+}
+/* ---------- RINGKASAN, OPNAME, LOG ---------- */
+function vDash(){
+  const low=items.filter(isLow).sort((a,b)=>a.stock-b.stock),since=Date.now()-30*864e5,agg={};
+  txs.filter(t=>t.type==='out'&&!t.voided&&t.at>=since).forEach(t=>agg[t.itemName]=(agg[t.itemName]||0)+t.qty);
+  const top=Object.entries(agg).sort((a,b)=>b[1]-a[1]).slice(0,5),mx=top.length?top[0][1]:1,wait=reqs.filter(r=>r.status==='pending').length;
+  const st=(n,l,h)=>`<div class="card" style="flex:1;min-width:130px;cursor:pointer;margin:0" onclick="${h}"><div style="font-size:26px;font-weight:700">${n}</div><div class="mt">${l}</div></div>`;
+  $('#app').innerHTML=`<h1>Ringkasan</h1><div class="row" style="margin-bottom:12px">${st(items.length,'Jenis barang',"go('stok')")}${st(low.length,'Stok menipis',"fLow=true;go('stok')")}${st(pend.length,'Sedang dipinjam',"go('pinjam')")}${st(wait,'Permohonan menunggu',"pTab='req';go('beli')")}</div>
+  <h2>Stok menipis</h2>${low.slice(0,5).map(i=>`<div class="card row sp" onclick="detail('${i.id}')" style="cursor:pointer"><div><b>${esc(i.name)}</b><div class="mt">${esc(i.location||'-')}</div></div><span class="bd low">${i.stock} ${esc(i.unit)}</span></div>`).join('')||'<div class="card mt">Semua stok aman.</div>'}
+  <h2>Paling sering keluar (30 hari)</h2>${top.map(([n,v])=>`<div style="margin-bottom:8px"><div class="row sp"><span>${esc(n)}</span><b>${v}</b></div><div style="height:6px;border-radius:3px;background:var(--ln)"><div style="height:6px;border-radius:3px;background:var(--ac);width:${Math.round(v/mx*100)}%"></div></div></div>`).join('')||'<div class="card mt">Belum ada barang keluar.</div>'}
+  <h2>Aktivitas terbaru</h2>${txs.filter(t=>!t.voided).slice(0,5).map(t=>`<div class="card mt" style="color:var(--tx)"><b>${esc(t.itemName)}</b> · ${t.type==='adj'?'Opname '+(t.qty>0?'+':'')+t.qty:(t.type==='out'?'Keluar ':'Masuk ')+t.qty} · ${esc(uname(t.by))} · ${fmt(t.at)}</div>`).join('')||'<div class="card mt">Belum ada transaksi.</div>'}`;
+}
+const opnDiff=()=>Object.keys(opn).filter(id=>byId(id)&&opn[id]!==''&&Math.floor(+opn[id])>=0&&Math.floor(+opn[id])!==byId(id).stock);
+function opnCount(){const b=$('#opbtn');if(b)b.textContent='Simpan ('+opnDiff().length+' selisih)'}
+function vOpname(){
+  const list=items.filter(i=>(i.name+i.location+i.code).toLowerCase().includes(oq.toLowerCase())).sort((a,b)=>(a.location||'').localeCompare(b.location||'')||a.name.localeCompare(b.name));
+  $('#app').innerHTML=`<div class="row sp"><h1>Stok opname</h1><button class="btn p" id="opbtn" onclick="saveOpname()">Simpan (${opnDiff().length} selisih)</button></div>
+  <p class="mt">Isi jumlah fisik hasil hitungan. Kosongkan jika tidak dihitung. Selisih akan menyesuaikan stok dan tercatat di Riwayat.</p>
+  <input id="oq" placeholder="Cari barang atau lokasi" value="${esc(oq)}">
+  ${list.map(i=>{const v=opn[i.id]??'',d=v===''?0:Math.floor(+v)-i.stock;return`<div class="card row sp" style="flex-wrap:nowrap"><div style="min-width:0"><b>${esc(i.name)}</b><div class="mt">${esc(i.location||'-')} · sistem ${i.stock} ${esc(i.unit)}${d?` · <span style="color:var(--wr)">selisih ${d>0?'+':''}${d}</span>`:''}</div></div><input type="number" min="0" inputmode="numeric" style="width:84px;margin:0" value="${esc(v)}" oninput="opn['${i.id}']=this.value;opnCount()"></div>`}).join('')||'<div class="card mt">Tidak ada barang.</div>'}`;
+  const el=$('#oq');el.oninput=()=>{oq=el.value;vOpname();const n=$('#oq');n.focus();n.setSelectionRange(oq.length,oq.length)};
+}
+function saveOpname(){
+  const ids=opnDiff();if(!ids.length)return alert('Tidak ada selisih untuk disimpan.');
+  if(!confirm('Sesuaikan stok '+ids.length+' barang sesuai hasil hitungan?'))return;
+  for(let k=0;k<ids.length;k+=200){
+    const b=fs.batch();
+    ids.slice(k,k+200).forEach(id=>{const i=byId(id),d=Math.floor(+opn[id])-i.stock;
+      b.update(fs.doc('items/'+id),{stock:inc(d)});
+      b.set(fs.collection('tx').doc(),{itemId:id,itemName:i.name,unit:i.unit,type:'adj',qty:d,who:'Stok opname',by:me.id,returnable:false,returned:false,at:Date.now()})});
+    if(!k)lg('Stok opname: '+ids.length+' barang disesuaikan',b);
+    b.commit().catch(err);
+  }
+  opn={};alert('Opname tersimpan.');render();
+}
+function vLog(){
+  $('#app').innerHTML='<h1>Log aktivitas</h1>'+(logs.map(l=>`<div class="card"><div>${esc(l.text)}</div><div class="mt">${esc(l.byName||'?')} · ${fmt(l.at)}</div></div>`).join('')||'<div class="card mt">Belum ada aktivitas.</div>');
 }
 let pendingPhoto;
 const okPh=p=>typeof p==='string'&&/^data:image\/jpeg;base64,/.test(p);
@@ -302,6 +342,7 @@ function saveItem(id){
   if(dup&&dup.id!==id)return alert('Kode sudah dipakai barang "'+dup.name+'".');
   const d={name,category:$('#f_cat').value.trim(),location:$('#f_loc').value.trim(),buyUrl:$('#f_url').value.trim(),min:+$('#f_min').value||0,unit:$('#f_unit').value.trim()||'pcs',code};
   if(pendingPhoto!==undefined)d.photo=pendingPhoto;
+  lg((id?'Mengubah':'Menambah')+' barang: '+name);
   (id?fs.doc('items/'+id).update(d):fs.collection('items').add({...d,stock:Math.max(0,+$('#f_stock').value||0)})).then(closeM).catch(err);
 }
 function detail(id){
@@ -311,12 +352,12 @@ function detail(id){
   <div class="card"><div class="row sp"><span>Stok</span><span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}${isLow(i)?' · hampir habis':''}</span></div>
   <p class="mt" style="margin:8px 0 0">Kategori: <b>${esc(i.category||'-')}</b><br>Lokasi: <b>${esc(i.location||'-')}</b><br>Batas peringatan: ${i.min} ${esc(i.unit)}<br>Beli di: ${u?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\//,'').slice(0,50))}</a>`:esc(i.buyUrl||'-')}</p></div>
   <div class="card" style="text-align:center"><div id="qr"></div><div class="mt">Kode: <b>${esc(i.code)}</b></div><button class="btn s" style="margin-top:8px" onclick="dlQr('${i.id}')">Unduh QR (PNG)</button></div>
-  ${isMember()?`<h2>Riwayat terakhir</h2>${txs.filter(t=>t.itemId===i.id&&!t.voided).slice(0,5).map(t=>`<div class="mt" style="margin-bottom:4px">${t.type==='out'?'Keluar':'Masuk'} ${t.qty} ${esc(t.unit)} · ${fmt(t.at)} · ${esc(uname(t.by))}${t.who?' · '+esc(t.who):''}</div>`).join('')||'<div class="mt">Belum ada transaksi.</div>'}<div style="height:10px"></div>`:''}
+  ${isMember()?`<h2>Riwayat terakhir</h2>${txs.filter(t=>t.itemId===i.id&&!t.voided).slice(0,5).map(t=>`<div class="mt" style="margin-bottom:4px">${t.type==='out'?'Keluar':t.type==='adj'?'Opname':'Masuk'} ${t.qty} ${esc(t.unit)} · ${fmt(t.at)} · ${esc(uname(t.by))}${t.who?' · '+esc(t.who):''}</div>`).join('')||'<div class="mt">Belum ada transaksi.</div>'}<div style="height:10px"></div>`:''}
   <div class="row">${isMember()?`<button class="btn p" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn p" onclick="txForm('${i.id}','in')">Masuk</button>`:''}
   ${isStaff()?`<button class="btn" onclick="itemForm('${i.id}')">Edit</button><button class="btn d" onclick="delItem('${i.id}')">Hapus</button>`:''}</div>`);
   try{new QRCode($('#qr'),{text:i.code,width:180,height:180})}catch(e){$('#qr').textContent='QR gagal dimuat.'}
 }
-function delItem(id){if(confirm('Hapus barang ini?'))fs.doc('items/'+id).delete().then(closeM).catch(err)}
+function delItem(id){const i=byId(id);if(confirm('Hapus barang ini?')){lg('Menghapus barang: '+(i?i.name:id));fs.doc('items/'+id).delete().then(closeM).catch(err)}}
 
 /* ---------- TRANSAKSI ---------- */
 function txForm(id,type){
@@ -450,6 +491,7 @@ function decide(id,ok){
     b.set(fs.collection('shopping').doc(),{name:r.name,qty:r.qty,urgency:r.urgency,link:r.link,price:r.price||0,by:r.by,reqId:id,bought:false,at:Date.now()});
     nfy(b,usersWith('capten','asisten'),`Disetujui & masuk list belanja: ${r.name} × ${r.qty} (${URG[r.urgency]})`);
   }
+  lg((ok?'Menyetujui':'Menolak')+' permohonan: '+r.name,b);
   if(r.by!==me.id)nfy(b,[r.by],`Permohonanmu "${r.name}" ${ok?'disetujui':'ditolak'}${reason?': '+reason:''}`);
   b.commit().catch(err);
 }
@@ -476,7 +518,7 @@ function printShop(){
 }
 /* ---------- LAINNYA: RIWAYAT & PENGGUNA ---------- */
 function vRiwayat(){
-  $('#app').innerHTML='<h1>Riwayat</h1>'+(txs.slice(0,100).map(t=>`<div class="card ${t.voided?'done':''}"><div class="row sp"><b>${esc(t.itemName)}</b><span class="bd ${t.type==='out'?'low':''}">${t.type==='out'?'−':'+'}${t.qty} ${esc(t.unit)}</span></div><div class="mt">${t.type==='out'?'Keluar':'Masuk'} · ${fmt(t.at)} · ${esc(uname(t.by))}${t.who?' · '+esc(t.who):''}${t.returned?' · sudah kembali':''}${t.voided?' · dibatalkan oleh '+esc(uname(t.voidedBy)):''}</div>${isStaff()&&!t.voided?`<button class="btn s d" style="margin-top:8px" onclick="voidTx('${t.id}')">Batalkan transaksi</button>`:''}</div>`).join('')||'<div class="card mt">Belum ada transaksi.</div>');
+  $('#app').innerHTML='<h1>Riwayat</h1>'+(txs.slice(0,100).map(t=>`<div class="card ${t.voided?'done':''}"><div class="row sp"><b>${esc(t.itemName)}</b><span class="bd ${t.type==='out'||t.qty<0?'low':''}">${t.type==='out'?'−'+t.qty:(t.qty<0?t.qty:'+'+t.qty)} ${esc(t.unit)}</span></div><div class="mt">${t.type==='out'?'Keluar':t.type==='adj'?'Opname':'Masuk'} · ${fmt(t.at)} · ${esc(uname(t.by))}${t.who?' · '+esc(t.who):''}${t.returned?' · sudah kembali':''}${t.voided?' · dibatalkan oleh '+esc(uname(t.voidedBy)):''}</div>${isStaff()&&!t.voided?`<button class="btn s d" style="margin-top:8px" onclick="voidTx('${t.id}')">Batalkan transaksi</button>`:''}</div>`).join('')||'<div class="card mt">Belum ada transaksi.</div>');
 }
 function voidTx(id){
   const t=txs.find(x=>x.id===id);if(!t||t.voided||!isStaff())return;
@@ -486,6 +528,7 @@ function voidTx(id){
   const b=fs.batch();
   b.update(fs.doc('tx/'+id),{voided:true,voidedBy:me.id,voidedAt:Date.now(),returnable:false});
   if(d&&it)b.update(fs.doc('items/'+t.itemId),{stock:inc(d)});
+  lg('Membatalkan transaksi: '+t.itemName+' ('+t.type+' '+t.qty+')',b);
   b.commit().catch(err);
 }
 function vWait(){$('#app').innerHTML='<div class="card"><b>Menyiapkan akun...</b><p class="mt">Jika ini berlangsung lama, akunmu mungkin belum aktif atau sudah dihapus oleh Admin.</p><button class="btn" onclick="auth.signOut()">Keluar</button></div>'}
@@ -499,15 +542,18 @@ function vUser(){
 function delUser(id){
   const u=users.find(x=>x.id===id);if(!u||!isAdmin())return;
   if(!confirm('Hapus pengguna "'+u.name+'"? Akses ke data dicabut. Untuk menghapus loginnya secara permanen, hapus juga di Firebase > Authentication > Users.'))return;
-  fs.doc('users/'+id).delete().catch(err);
+  lg('Menghapus pengguna: '+u.name);fs.doc('users/'+id).delete().catch(err);
 }
 function setRole(id,r){
   const u=users.find(x=>x.id===id)||{};
   if(r==='admin'&&!isAdmin()){render();return}
   if((r==='admin'||u.role==='admin')&&!confirm(r==='admin'?'Jadikan '+u.name+' sebagai Admin?':'Cabut role Admin dari '+u.name+'?')){render();return}
-  fs.doc('users/'+id).update({role:r}).catch(e=>{err(e);render()});
+  lg('Role '+u.name+': '+(ROLES[u.role]||u.role)+' → '+ROLES[r]);fs.doc('users/'+id).update({role:r}).catch(e=>{err(e);render()});
 }
 const netUI=()=>{$('#net').hidden=navigator.onLine};addEventListener('online',netUI);addEventListener('offline',netUI);netUI();
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();dip=e;render()});
+function installApp(){if(dip){dip.prompt();dip=null;render()}}
+if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 try{
   if(typeof firebase==='undefined')throw new Error('Library Firebase gagal dimuat. Cek koneksi internet / matikan Shields Brave untuk situs ini.');
   boot();
