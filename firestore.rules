@@ -24,17 +24,22 @@ service cloud.firestore {
     match /items/{i} {
       allow read: if ok();
       allow create, delete: if staff();
-      allow update: if staff()
-        || (member() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']));
+      allow update: if request.resource.data.stock >= 0 && (staff()
+        || (member() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock'])));
     }
     match /tx/{t} {
-      allow read, create, update: if member();
+      allow read, create: if member();
+      allow update: if staff()
+        || (member() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['returned','retAt']));
       allow delete: if boss();
     }
     match /requests/{r} {
       allow read: if member();
       allow create: if member() && request.resource.data.status == 'pending' && request.resource.data.by == request.auth.uid;
-      allow update, delete: if boss();
+      allow update: if boss()
+        || (ok() && resource.data.by == request.auth.uid && resource.data.status == 'pending' && request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+      allow delete: if boss();
     }
     match /shopping/{s} {
       allow read: if member();
