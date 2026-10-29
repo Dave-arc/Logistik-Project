@@ -6,7 +6,7 @@ const MID=['relawan','logistik','asisten','capten'];
 let auth,fs,me=null,unsubs=[],dataUn=[],started=false,ensuring=false,firstSnap={};
 let items=[],pend=[],logs=[],txs=[],reqs=[],shop=[],users=[],notifs=[];
 let view='stok',scanMode='info',scanner=null,q='',pTab='req',lTab='riwayat',authMode='login',tm=null;
-let fCat='',fLoc='',fLow=false,fSort='name',cart=[],cartOn=false,lastScan={c:'',t:0},dip=null,opn={},oq='';
+let fCat='',fLoc='',fLow=false,fSort='name',cart=[],cartOn=false,lastScan={c:'',t:0},dip=null,opn={},oq='',lastList=[],camFace='environment',torchOn=false;
 const isAdmin=()=>me&&me.role==='admin';
 const isBoss=()=>me&&['admin','ppbk'].includes(me.role);
 const isStaff=()=>me&&['admin','ppbk','capten','asisten'].includes(me.role);
@@ -31,7 +31,7 @@ function boot(){
     stopAll();me=null;started=false;ensuring=false;
     if(!u){render();return}
     unsubs.push(fs.doc('users/'+u.uid).onSnapshot(s=>{
-      if(!s.exists){if(u.providerData.some(p=>p.providerId==='google.com')&&!ensuring){ensuring=true;const em=u.email||'';fs.doc('users/'+u.uid).set({name:u.displayName||em.split('@')[0],username:em.split('@')[0],email:em,role:'relawan',at:Date.now()}).catch(err)}render();return}const old=me&&me.role;me={id:s.id,...s.data()};
+      if(!s.exists){if(u.providerData.some(p=>p.providerId==='google.com')&&!ensuring){ensuring=true;ensureGoogleDoc(u)}render();return}const old=me&&me.role;me={id:s.id,...s.data()};
       if(!started||old!==me.role){started=true;stopData();listen(u.uid)}render()
     },err));
   });
@@ -44,7 +44,7 @@ function listen(uid){
     set(s.docs.map(d=>({id:d.id,...d.data()})));
     if(onNew&&firstSnap[name])s.docChanges().forEach(c=>c.type==='added'&&onNew(c.doc.data()));
     firstSnap[name]=true;rerender();
-  },e=>{console.warn(name,e);err(e.code==='permission-denied'?{message:'Tidak ada izin membaca "'+name+'". Pastikan Rules di Firebase sudah di-Publish.'}:e)}));
+  },e=>{firstSnap[name]=true;rerender();console.warn(name,e);err(e.code==='permission-denied'?{message:'Tidak ada izin membaca "'+name+'". Pastikan Rules di Firebase sudah di-Publish.'}:e)}));
   L('items',fs.collection('items'),d=>items=d);
   isMember()&&L('tx',fs.collection('tx').orderBy('at','desc').limit(300),d=>txs=d);
   isMember()&&L('pend',fs.collection('tx').where('returnable','==',true).where('returned','==',false),d=>pend=d);
@@ -66,8 +66,9 @@ function doAuth(){
   }
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(id))return alert('Isi email yang valid (mis. nama@gmail.com).');
   const name=$('#a_name').value.trim();if(!name)return alert('Isi nama lengkap.');
-  auth.createUserWithEmailAndPassword(id,p).then(c=>fs.doc('users/'+c.user.uid).set({name,username:id.split('@')[0],email:id,role:'relawan',at:Date.now()}))
-    .catch(e=>alert(e.code==='auth/email-already-in-use'?'Email sudah terdaftar. Coba Masuk atau Lupa password.':e.message));
+  const inv=($('#a_inv')||{value:''}).value.trim();
+  auth.createUserWithEmailAndPassword(id,p).then(c=>fs.doc('users/'+c.user.uid).set(Object.assign({name,username:id.split('@')[0],email:id,role:'relawan',at:Date.now()},inv?{invite:inv}:{})).catch(e=>{c.user.delete().catch(()=>{});throw e}))
+    .catch(e=>alert(e.code==='auth/email-already-in-use'?'Email sudah terdaftar. Coba Masuk atau Lupa password.':e.code==='permission-denied'?'Kode undangan salah atau belum diisi.':e.message));
 }
 function doGoogle(){
   const pv=new firebase.auth.GoogleAuthProvider();pv.setCustomParameters({prompt:'select_account'});
@@ -79,7 +80,7 @@ function doGoogle(){
 }
 function forgotForm(){
   openM(`<h1>Reset password</h1><p class="mt">Masukkan email akunmu. Tautan untuk membuat password baru akan dikirim ke email itu.</p>
-  <label>Email</label><input id="rs_email" type="email" autocapitalize="none">
+  <label>Email</label><input id="rs_email" type="email" autocapitalize="none" onkeydown="if(event.key==='Enter')doReset()">
   <div class="row"><button class="btn p" onclick="doReset()">Kirim tautan</button><button class="btn" onclick="closeM()">Batal</button></div>`);
 }
 function doReset(){
@@ -111,14 +112,17 @@ function vAuth(){
   $('#app').innerHTML=`<h1>${reg?'Daftar akun':'Masuk'}</h1><div class="card">
   ${reg?'<label>Nama lengkap</label><input id="a_name" autocomplete="name">':''}
   <label>${reg?'Email (untuk reset password)':'Email atau username'}</label><input id="a_user" ${reg?'type="email"':''} autocapitalize="none" autocomplete="username">
-  <label>Password${reg?' (min. 6 karakter)':''}</label><input id="a_pass" type="password" autocomplete="${reg?'new':'current'}-password">
+  <label>Password${reg?' (min. 6 karakter)':''}</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input id="a_pass" type="password" style="flex:1;min-width:0" autocomplete="${reg?'new':'current'}-password"><button type="button" class="btn s" style="margin-bottom:6px" onclick="togglePw()">Lihat</button></div>
+  ${reg?'<label>Kode undangan (isi jika diberikan Admin)</label><input id="a_inv" autocapitalize="none">':''}
   <button class="btn p" style="width:100%" onclick="doAuth()">${reg?'Daftar':'Masuk'}</button>
   ${reg?'':'<p style="margin:10px 0 0;text-align:center"><a href="#" onclick="forgotForm();return false">Lupa password?</a></p>'}</div>
   <div class="mt" style="text-align:center;margin:10px 0">atau</div>
   <button class="btn" style="width:100%" onclick="doGoogle()">Masuk dengan Google</button>
   <p style="text-align:center"><button class="btn s" onclick="authMode='${reg?'login':'reg'}';vAuth()">${reg?'Sudah punya akun? Masuk':'Belum punya akun? Daftar'}</button></p>
   ${reg?'<p class="mt">Akun baru berperan Relawan Lain (hanya lihat stok & scan). Role diubah oleh Admin, PPBK, atau Capten.</p>':''}`;
+  ['a_name','a_user','a_pass','a_inv'].forEach(id=>{const e=$('#'+id);if(e)e.addEventListener('keydown',ev=>{if(ev.key==='Enter')doAuth()})});
 }
+function togglePw(){const e=$('#a_pass');e.type=e.type==='password'?'text':'password';event.target.textContent=e.type==='password'?'Lihat':'Sembunyikan'}
 
 /* ---------- RENDER ---------- */
 const MENU=[['dash','Ringkasan',1],['stok','Stok',0],['scan','Scan',0],['pinjam','Dipinjam',1],['beli','Pembelian',1],['riwayat','Riwayat',1],['opname','Stok opname',2],['user','Pengguna',1],['log','Log aktivitas',4]];
@@ -137,8 +141,9 @@ function render(){
   $('#burger').innerHTML='&#9776;'+(un?`<span class="dot">${un}</span>`:'');
   $('#side').innerHTML=`<div><b>${esc(me.name)}</b><div class="mt">${esc(ROLES[me.role]||me.role)}</div></div>
   <div class="menu">${allowed().map(m=>`<button class="${m[0]===view?'on':''}" onclick="go('${m[0]}')">${m[1]}${m[0]==='beli'&&pend?`<span class="dot">${pend}</span>`:''}</button>`).join('')}</div>
-  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}${dip?`<button class="btn s" onclick="installApp()">Pasang aplikasi</button>`:''}<button class="btn s" onclick="showAccount()">Akun</button><button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
-  ({dash:vDash,stok:vStok,scan:vScan,pinjam:vPinjam,beli:vBeli,riwayat:vRiwayat,opname:vOpname,user:vUser,log:vLog})[view]();
+  <div class="foot">${isMember()?`<button class="btn s" onclick="showNotifs()">Notifikasi${un?`<span class="dot">${un}</span>`:''}</button>`:''}${dip?`<button class="btn s" onclick="installApp()">Pasang aplikasi</button>`:''}<button class="btn s" onclick="showGuide()">Panduan</button><button class="btn s" onclick="showAccount()">Akun</button><button class="btn s" onclick="auth.signOut()">Keluar</button></div>`;
+  if(!firstSnap.items)$('#app').innerHTML='<div class="card mt">Memuat data...</div>';else ({dash:vDash,stok:vStok,scan:vScan,pinjam:vPinjam,beli:vBeli,riwayat:vRiwayat,opname:vOpname,user:vUser,log:vLog})[view]();
+  maybeGuide();
 }
 function openM(h){$('#mbox').innerHTML=h;$('#modal').hidden=false}
 function closeM(){$('#modal').hidden=true;$('#mbox').innerHTML=''}
@@ -157,9 +162,9 @@ function showNotifs(){closeSide();
 function vStok(){
   const low=items.filter(isLow),cats=[...new Set(items.map(i=>i.category).filter(Boolean))].sort(),locs=[...new Set(items.map(i=>i.location).filter(Boolean))].sort();
   let list=items.filter(i=>(i.name+i.category+i.location+i.code).toLowerCase().includes(q.toLowerCase())&&(!fCat||i.category===fCat)&&(!fLoc||i.location===fLoc)&&(!fLow||isLow(i)));
-  list=[...list].sort(fSort==='stock'?(a,b)=>a.stock-b.stock:(a,b)=>a.name.localeCompare(b.name));
+  list=[...list].sort(fSort==='stock'?(a,b)=>a.stock-b.stock:(a,b)=>a.name.localeCompare(b.name));lastList=list;
   const sel=(id,v,arr,ph)=>`<select id="${id}" style="flex:1;min-width:120px;margin:0"><option value="">${ph}</option>${arr.map(x=>`<option ${x===v?'selected':''}>${esc(x)}</option>`).join('')}</select>`;
-  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<div class="row"><button class="btn s" onclick="importForm()">Impor</button><button class="btn s" onclick="exportXlsx()">Ekspor</button><button class="btn s" id="qrall" onclick="dlAllQr()">Unduh QR</button><button class="btn p" onclick="itemForm()">+ Barang</button></div>':''}</div>
+  $('#app').innerHTML=`<div class="row sp"><h1>Stok barang</h1>${isStaff()?'<div class="row"><button class="btn s" onclick="importForm()">Impor</button><button class="btn s" onclick="exportXlsx()">Ekspor</button><button class="btn s" id="qrall" onclick="dlAllQr()">Unduh QR</button><button class="btn s" onclick="printLabels()">Cetak label</button><button class="btn p" onclick="itemForm()">+ Barang</button></div>':''}</div>
   ${low.length?`<div class="warn">${low.length} barang hampir habis: ${esc(low.slice(0,3).map(i=>i.name).join(', '))}${low.length>3?' dan lainnya':''}</div>`:''}
   <input id="q" placeholder="Cari nama, kategori, lokasi, kode" value="${esc(q)}">
   <div class="row" style="margin-bottom:8px">${sel('fs_cat',fCat,cats,'Semua kategori')}${sel('fs_loc',fLoc,locs,'Semua lokasi')}<select id="fs_sort" style="flex:1;min-width:120px;margin:0"><option value="name" ${fSort==='name'?'selected':''}>Urut nama</option><option value="stock" ${fSort==='stock'?'selected':''}>Stok terendah</option></select></div>
@@ -168,7 +173,7 @@ function vStok(){
     <div class="row sp" onclick="detail('${i.id}')" style="cursor:pointer;flex-wrap:nowrap"><div class="row" style="flex-wrap:nowrap;gap:10px;min-width:0">${thumb(i)}<div><b>${esc(i.name)}</b><div class="mt">${esc(i.category||'Tanpa kategori')} · ${esc(i.location||'Lokasi belum diisi')}</div></div></div>
     <span class="bd ${isLow(i)?'low':''}">${i.stock} ${esc(i.unit)}</span></div>
     ${isMember()?`<div class="row" style="margin-top:8px"><button class="btn s" onclick="txForm('${i.id}','out')">Keluar</button><button class="btn s" onclick="txForm('${i.id}','in')">Masuk</button></div>`:''}</div>`).join('')
-  :`<div class="card mt">${items.length?'Tidak ada barang yang cocok.':'Belum ada barang.'}</div>`}`;
+  :`<div class="card mt">${items.length?'Tidak ada barang yang cocok.':'Belum ada barang.'}${!items.length&&isStaff()?`<div class="row" style="margin-top:10px"><button class="btn p s" onclick="itemForm()">+ Barang</button><button class="btn s" onclick="importForm()">Impor dari Excel</button></div>`:''}${!items.length&&!isStaff()?'<br>Minta staf menambahkan barang terlebih dahulu.':''}</div>`}`;
   const el=$('#q');el.oninput=()=>{q=el.value;vStok();const n=$('#q');n.focus();n.setSelectionRange(q.length,q.length)};
   $('#fs_cat').onchange=e=>{fCat=e.target.value;vStok()};$('#fs_loc').onchange=e=>{fLoc=e.target.value;vStok()};
   $('#fs_sort').onchange=e=>{fSort=e.target.value;vStok()};$('#fs_low').onchange=e=>{fLow=e.target.checked;vStok()};
@@ -220,7 +225,7 @@ async function doImport(){
       const d={};['name','category','location','buyUrl','unit'].forEach(f=>{if(o[f])d[f]=o[f]});
       if(o.min)d.min=num(o.min,0);if(ovr&&o.stock)d.stock=num(o.stock,0);
       if(Object.keys(d).length)ops.push(b=>b.update(fs.doc('items/'+p.ex.id),d));
-    }else ops.push(b=>b.set(fs.collection('items').doc(),{name:o.name,category:o.category||'',location:o.location||'',buyUrl:o.buyUrl||'',unit:o.unit||'pcs',min:num(o.min,5),stock:num(o.stock,0),code:p.code}));
+    }else ops.push(b=>b.set(fs.collection('items').doc(),{name:o.name,category:canon('category',o.category||''),location:canon('location',o.location||''),buyUrl:o.buyUrl||'',unit:o.unit||'pcs',min:num(o.min,5),stock:num(o.stock,0),code:p.code}));
   });
   lg('Impor Excel: '+ops.length+' barang diproses');
   try{for(let i=0;i<ops.length;i+=400){const b=fs.batch();ops.slice(i,i+400).forEach(f=>f(b));await b.commit()}closeM();alert('Impor selesai: '+ops.length+' barang diproses.')}catch(e){err(e)}
@@ -300,6 +305,77 @@ function saveOpname(){
 function vLog(){
   $('#app').innerHTML='<h1>Log aktivitas</h1>'+(logs.map(l=>`<div class="card"><div>${esc(l.text)}</div><div class="mt">${esc(l.byName||'?')} · ${fmt(l.at)}</div></div>`).join('')||'<div class="card mt">Belum ada aktivitas.</div>');
 }
+/* ---------- PANDUAN UNTUK PENGGUNA BARU ---------- */
+const GUIDE={
+ relawan:[['Selamat datang','Kamu masuk sebagai <b>Relawan Lain</b>: bisa melihat stok dan scan barang. Panduan ini hanya 5 langkah singkat.'],
+  ['Buka menu','Di HP, tekan tombol <b>&#9776;</b> (tiga garis) di kiri atas untuk membuka menu. Di laptop, menu sudah tampil di sisi kiri.'],
+  ['Lihat stok','Di menu <b>Stok</b>, cari barang lalu ketuk untuk melihat foto, lokasi, link beli, dan QR-nya. Kartu merah berarti stok hampir habis.'],
+  ['Scan barang','Di menu <b>Scan</b>, tekan Buka kamera lalu arahkan ke QR atau barcode barang. Tidak ada kamera? Ketik kodenya.'],
+  ['Akun & akses lebih','Menu <b>Akun</b> untuk ganti password atau tautkan Google. Perlu mencatat barang keluar? Minta Admin atau Capten menaikkan role-mu.']],
+ logistik:[['Selamat datang','Kamu masuk sebagai <b>Logistik</b>. Kamu bisa melihat stok, scan, mencatat barang keluar/masuk, dan mengajukan pembelian.'],
+  ['Ringkasan & stok','<b>Ringkasan</b> menampilkan kondisi gudang. <b>Stok</b> untuk mencari barang; kartu merah berarti hampir habis. Di HP, menu dibuka lewat tombol <b>&#9776;</b>.'],
+  ['Scan & catat','Di menu <b>Scan</b>, pilih Keluar atau Masuk, scan barang, lalu isi jumlah. Banyak barang sekaligus? Centang <b>Scan beruntun</b>.'],
+  ['Dipinjam','Centang "Akan dikembalikan" saat barang keluar. Saat barang kembali, centang di menu <b>Dipinjam</b> agar stok pulih otomatis.'],
+  ['Pembelian','Butuh barang baru? Buka <b>Pembelian</b>, tekan + Permohonan, dan pilih urgensi. Hasilnya akan dikirim ke notifikasimu.']],
+ staf:[['Selamat datang','Kamu masuk sebagai <b>{role}</b> dengan akses pengelolaan. Berikut hal-hal penting yang perlu kamu tahu.'],
+  ['Barang & QR','Di <b>Stok</b>, tekan + Barang (isi data dan foto). Unduh QR tiap barang, cetak, dan tempel. Punya data Excel? Pakai <b>Impor</b>.'],
+  ['Keluar & masuk','Pakai <b>Scan</b> untuk mencatat keluar/masuk, termasuk Scan beruntun. Salah input? Buka <b>Riwayat</b> lalu Batalkan transaksi.'],
+  ['Dipinjam & opname','<b>Dipinjam</b> memantau barang yang belum kembali. <b>Stok opname</b> mencocokkan hitungan fisik dengan data di aplikasi.'],
+  ['Pembelian & pengguna','<b>Pembelian</b> berisi permohonan dan list belanja (Admin dan PPBK yang menyetujui). Menu <b>Pengguna</b> untuk mengatur role anggota.']]};
+let gStep=0,gList=[];
+const guideGroup=()=>!isMember()?'relawan':isStaff()?'staf':'logistik';
+function maybeGuide(){
+  if(!me||!$('#modal').hidden)return;
+  const k='gudang_guide_'+me.id+'_'+guideGroup();
+  try{if(localStorage.getItem(k))return;localStorage.setItem(k,'1')}catch(e){return}
+  showGuide();
+}
+function showGuide(){closeSide();gList=GUIDE[guideGroup()];gStep=0;drawGuide()}
+function drawGuide(){
+  const g=gList[gStep],last=gStep===gList.length-1;
+  openM(`<div class="row sp"><span class="mt">Langkah ${gStep+1} dari ${gList.length}</span><button class="btn s" onclick="closeM()">Lewati</button></div>
+  <h1 style="margin-top:12px">${g[0]}</h1><p style="font-size:16px;line-height:1.55">${g[1].replace('{role}',esc(ROLES[me.role]||me.role))}</p>
+  <div class="row" style="justify-content:center;margin:14px 0">${gList.map((_,i)=>`<span style="width:8px;height:8px;border-radius:50%;background:${i===gStep?'var(--ac)':'var(--ln)'}"></span>`).join('')}</div>
+  <div class="row sp">${gStep?'<button class="btn" onclick="gStep--;drawGuide()">Kembali</button>':'<span></span>'}<button class="btn p" onclick="${last?'closeM()':'gStep++;drawGuide()'}">${last?'Selesai':'Berikutnya'}</button></div>`);
+}
+/* ---------- UNDANGAN, SENTER, CETAK LABEL, SARAN ISIAN ---------- */
+const uniq=k=>[...new Set(items.map(x=>x[k]).filter(Boolean))].sort();
+const canon=(k,v)=>{const m=items.find(x=>String(x[k]||'').toLowerCase()===v.toLowerCase());return m?m[k]:v};
+function ensureGoogleDoc(u,inv){
+  const em=u.email||'',d={name:u.displayName||em.split('@')[0],username:em.split('@')[0],email:em,role:'relawan',at:Date.now()};
+  if(inv)d.invite=inv;
+  fs.doc('users/'+u.uid).set(d).catch(e=>{
+    if(e.code!=='permission-denied'){err(e);return}
+    const c=prompt(inv?'Kode undangan salah. Coba lagi:':'Akun baru memerlukan kode undangan dari Admin. Masukkan kode:');
+    if(c&&c.trim())ensureGoogleDoc(u,c.trim());else{alert('Pendaftaran dibatalkan.');u.delete().catch(()=>{});auth.signOut()}
+  });
+}
+function inviteForm(){
+  fs.doc('settings/invite').get().then(s=>{const d=s.exists?s.data():{code:'',active:false};
+    openM(`<h1>Kode undangan</h1><p class="mt">Jika aktif, orang yang mendaftar wajib memasukkan kode ini. Bagikan hanya kepada orang yang kamu undang. Akun yang sudah ada tidak terpengaruh.</p>
+    <label>Kode</label><input id="iv_code" value="${esc(d.code||'')}" autocapitalize="none">
+    <label class="row" style="color:var(--tx);margin-bottom:12px"><input id="iv_on" type="checkbox" style="width:22px;margin:0" ${d.active?'checked':''}> Wajib saat daftar</label>
+    <div class="row"><button class="btn p" onclick="saveInvite()">Simpan</button><button class="btn" onclick="closeM()">Batal</button></div>`)}).catch(err);
+}
+function saveInvite(){
+  const code=$('#iv_code').value.trim(),active=$('#iv_on').checked;
+  if(active&&code.length<4)return alert('Kode minimal 4 karakter.');
+  lg(active?'Mengaktifkan kode undangan':'Menonaktifkan kode undangan');
+  fs.doc('settings/invite').set({code,active}).then(closeM).catch(err);
+}
+async function toggleTorch(){
+  if(!scanner)return;
+  try{torchOn=!torchOn;await scanner.applyVideoConstraints({advanced:[{torch:torchOn}]});$('#torchb').classList.toggle('on',torchOn)}
+  catch(e){torchOn=false;alert('Senter tidak didukung di perangkat atau browser ini.')}
+}
+function flipCam(){camFace=camFace==='environment'?'user':'environment';torchOn=false;stopScan();setTimeout(startScan,450)}
+function printLabels(){
+  const L=lastList.length?lastList:items;if(!L.length)return alert('Belum ada barang.');
+  if(!confirm('Cetak '+L.length+' label QR (sesuai filter yang sedang aktif)?'))return;
+  const w=window.open('','_blank');if(!w)return alert('Pop-up diblokir. Izinkan pop-up untuk situs ini.');
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>Label QR</title><style>@page{size:A4;margin:10mm}body{margin:0;font-family:Arial,sans-serif}.g{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}.l{border:1px dashed #aaa;padding:2mm;break-inside:avoid}.l img{width:100%;display:block}</style><div class="g">${L.map(i=>`<div class="l"><img src="${qrCanvas(i).toDataURL('image/png')}"></div>`).join('')}</div>`);
+  w.document.close();w.focus();setTimeout(()=>w.print(),600);
+}
 let pendingPhoto;
 const okPh=p=>typeof p==='string'&&/^data:image\/jpeg;base64,/.test(p);
 const thumb=i=>okPh(i.photo)?`<img class="th" src="${i.photo}" alt="">`:'<div class="th"></div>';
@@ -327,8 +403,8 @@ function itemForm(id){
   <label class="btn s" style="margin:0;cursor:pointer;color:var(--tx)">Upload<input type="file" accept="image/*" hidden onchange="pickPhoto(this)"></label>
   <button type="button" class="btn s d" onclick="clearPhoto()">Hapus</button></div></div>
   <label>Nama barang</label><input id="f_name" value="${esc(i.name)}">
-  <label>Kategori</label><input id="f_cat" value="${esc(i.category)}">
-  <label>Lokasi penyimpanan</label><input id="f_loc" value="${esc(i.location)}">
+  <label>Kategori</label><input id="f_cat" list="dl_cat" value="${esc(i.category)}"><datalist id="dl_cat">${uniq('category').map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
+  <label>Lokasi penyimpanan</label><input id="f_loc" list="dl_loc" value="${esc(i.location)}"><datalist id="dl_loc">${uniq('location').map(x=>`<option value="${esc(x)}">`).join('')}</datalist>
   <label>Link pembelian / toko</label><input id="f_url" value="${esc(i.buyUrl)}" placeholder="https://...">
   <div class="row"><div style="flex:1"><label>Stok${id?'':' awal'}</label><input id="f_stock" type="number" min="0" value="${i.stock}" ${id?'disabled':''}></div>
   <div style="flex:1"><label>Batas peringatan</label><input id="f_min" type="number" min="0" value="${i.min}"></div>
@@ -340,7 +416,7 @@ function saveItem(id){
   const name=$('#f_name').value.trim();if(!name)return alert('Nama barang wajib diisi.');
   const code=$('#f_code').value.trim()||nextCode(),dup=byCode(code);
   if(dup&&dup.id!==id)return alert('Kode sudah dipakai barang "'+dup.name+'".');
-  const d={name,category:$('#f_cat').value.trim(),location:$('#f_loc').value.trim(),buyUrl:$('#f_url').value.trim(),min:+$('#f_min').value||0,unit:$('#f_unit').value.trim()||'pcs',code};
+  const d={name,category:canon('category',$('#f_cat').value.trim()),location:canon('location',$('#f_loc').value.trim()),buyUrl:$('#f_url').value.trim(),min:+$('#f_min').value||0,unit:$('#f_unit').value.trim()||'pcs',code};
   if(pendingPhoto!==undefined)d.photo=pendingPhoto;
   lg((id?'Mengubah':'Menambah')+' barang: '+name);
   (id?fs.doc('items/'+id).update(d):fs.collection('items').add({...d,stock:Math.max(0,+$('#f_stock').value||0)})).then(closeM).catch(err);
@@ -389,7 +465,7 @@ function vScan(){
   $('#app').innerHTML=`<h1>Scan barcode / QR</h1>
   <div class="seg">${[['info','Lihat data'],['out','Keluar'],['in','Masuk']].filter(x=>isMember()||x[0]==='info').map(([k,l])=>`<button class="btn ${scanMode===k?'on':''}" onclick="scanMode='${k}';cart=[];vScan()">${l}</button>`).join('')}</div>
   ${scanMode!=='info'&&isMember()?`<label class="row" style="color:var(--tx);margin-bottom:8px"><input type="checkbox" style="width:22px;margin:0" ${cartOn?'checked':''} onchange="cartOn=this.checked;vScan()"> Scan beruntun (keranjang)</label>`:''}
-  <div id="reader"></div><div class="row"><button class="btn p" id="cam" onclick="startScan()">Buka kamera</button></div>
+  <div id="reader"></div><div class="row" id="camrow"><button class="btn p" id="cam" onclick="startScan()">Buka kamera</button></div>
   <div id="serr" class="mt" style="margin-top:8px">Kamera butuh HTTPS. Atau ketik kode manual:</div>
   <div class="row" style="margin-top:6px"><input id="man" placeholder="mis. BRG-0001" style="flex:1;margin:0"><button class="btn" onclick="found($('#man').value)">${cartOk()?'Tambah':'Cari'}</button></div>
   <div id="cartbox"></div>`;
@@ -420,8 +496,8 @@ function saveCart(){
 function startScan(){
   if(typeof Html5Qrcode==='undefined')return $('#serr').textContent='Library scanner gagal dimuat.';
   scanner=new Html5Qrcode('reader');
-  scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},t=>{if(cartOk())addCart(t);else{stopScan();found(t)}},()=>{})
-   .then(()=>{$('#cam').textContent='Matikan kamera';$('#cam').onclick=()=>{stopScan();vScan()}})
+  scanner.start({facingMode:camFace},{fps:10,qrbox:{width:240,height:240}},t=>{if(cartOk())addCart(t);else{stopScan();found(t)}},()=>{})
+   .then(()=>{$('#cam').textContent='Matikan kamera';$('#cam').onclick=()=>{stopScan();vScan()};document.querySelectorAll('#camrow .xb').forEach(b=>b.remove());$('#camrow').insertAdjacentHTML('beforeend','<button class="btn xb" id="torchb" onclick="toggleTorch()">Senter</button><button class="btn xb" onclick="flipCam()">Balik kamera</button>')})
    .catch(()=>{scanner=null;$('#serr').textContent='Kamera tidak bisa dibuka. Izinkan akses kamera (HTTPS), atau ketik kode manual.'});
 }
 function stopScan(){if(scanner){const s=scanner;scanner=null;s.stop().then(()=>s.clear()).catch(()=>{})}}
@@ -535,7 +611,7 @@ function vWait(){$('#app').innerHTML='<div class="card"><b>Menyiapkan akun...</b
 function vUser(){
   const list=users.filter(u=>isStaff()||u.role!=='relawan');
   const opts=isAdmin()?Object.keys(ROLES):isBoss()?Object.keys(ROLES).filter(r=>r!=='admin'):MID;
-  $('#app').innerHTML='<h1>Pengguna</h1>'+(isStaff()?'':'<p class="mt">Hanya untuk dilihat. Role diubah oleh staf.</p>')+list.map(u=>{
+  $('#app').innerHTML='<div class="row sp"><h1>Pengguna</h1>'+(isAdmin()?'<button class="btn s" onclick="inviteForm()">Kode undangan</button>':'')+'</div>'+(isStaff()?'':'<p class="mt">Hanya untuk dilihat. Role diubah oleh staf.</p>')+list.map(u=>{
     const can=isAdmin()?u.id!==me.id:(u.role!=='admin'&&(isBoss()||(isStaff()&&MID.includes(u.role))));
     return`<div class="card row sp"><div><b>${esc(u.name)}</b><div class="mt">@${esc(u.username)}</div></div><div class="row">${can?`<select style="width:auto;margin:0" onchange="setRole('${u.id}',this.value)">${opts.map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${ROLES[r]}</option>`).join('')}</select>`:`<span class="bd">${esc(ROLES[u.role]||u.role)}</span>`}${isAdmin()&&u.id!==me.id?`<button class="btn s d" onclick="delUser('${u.id}')">Hapus</button>`:''}</div></div>`}).join('');
 }
