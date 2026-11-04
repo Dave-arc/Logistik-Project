@@ -1,32 +1,34 @@
 <!DOCTYPE html>
 <html lang="id">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Gudang</title>
-<link rel="stylesheet" href="style.css">
-<link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#4F6358">
-<link rel="apple-touch-icon" href="icon-192.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Gudang">
-</head>
-<body>
-<header id="top" hidden><button id="burger" aria-label="Menu"></button><b>Gudang</b></header>
-<aside id="side" hidden></aside>
-<div id="scrim" hidden></div>
-<main id="app"></main>
-<div id="net" hidden>Offline: perubahan disimpan dan dikirim saat online kembali</div>
-<div id="modal" class="modal" hidden><div id="mbox"></div></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-auth-compat.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-firestore-compat.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="config.js"></script>
-<script src="app.js"></script>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Gudang</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#4F6358">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Gudang">
+</head>
+
+<body>
+    <header id="top" hidden><button id="burger" aria-label="Menu"></button><b>Gudang</b></header>
+        <aside id="side" hidden></aside>
+        <div id="scrim" hidden></div>
+        <main id="app"></main>
+        <div id="net" hidden>Offline: perubahan disimpan dan dikirim saat online kembali</div>
+        <div id="modal" class="modal" hidden><div id="mbox"></div></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-auth-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-firestore-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>

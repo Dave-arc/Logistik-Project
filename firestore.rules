@@ -6,11 +6,16 @@ service cloud.firestore {
     function member() { return ok() && me().role in ['admin','ppbk','capten','asisten','logistik']; }
     function boss() { return ok() && me().role in ['admin','ppbk']; }
     function staff() { return ok() && me().role in ['admin','ppbk','capten','asisten']; }
+    function inviteOk() {
+      return !exists(/databases/$(db)/documents/settings/invite)
+        || get(/databases/$(db)/documents/settings/invite).data.active != true
+        || request.resource.data.get('invite','') == get(/databases/$(db)/documents/settings/invite).data.code;
+    }
     function mid(r) { return r in ['relawan','logistik','asisten','capten']; }
 
     match /users/{u} {
       allow read: if request.auth != null && (request.auth.uid == u || member());
-      allow create: if request.auth.uid == u && request.resource.data.role == 'relawan';
+      allow create: if request.auth.uid == u && request.resource.data.role == 'relawan' && inviteOk();
       // Hanya admin yang boleh memberi/mencabut role admin. Admin tidak bisa mengubah/menghapus dirinya sendiri.
       allow update: if ok() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
         && (
@@ -49,6 +54,9 @@ service cloud.firestore {
     match /logs/{l} {
       allow read: if boss();
       allow create: if member() && request.resource.data.by == request.auth.uid;
+    }
+    match /settings/{s} {
+      allow read, write: if ok() && me().role == 'admin';
     }
     match /notifs/{n} {
       allow read, update, delete: if ok() && resource.data.to == request.auth.uid;
