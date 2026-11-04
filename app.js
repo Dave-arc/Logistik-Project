@@ -312,16 +312,18 @@ const GUIDE={
   ['Lihat stok','Di menu <b>Stok</b>, cari barang lalu ketuk untuk melihat foto, lokasi, link beli, dan QR-nya. Kartu merah berarti stok hampir habis.'],
   ['Scan barang','Di menu <b>Scan</b>, tekan Buka kamera lalu arahkan ke QR atau barcode barang. Tidak ada kamera? Ketik kodenya.'],
   ['Akun & akses lebih','Menu <b>Akun</b> untuk ganti password atau tautkan Google. Perlu mencatat barang keluar? Minta Admin atau Capten menaikkan role-mu.']],
+
  logistik:[['Selamat datang','Kamu masuk sebagai <b>Logistik</b>. Kamu bisa melihat stok, scan, mencatat barang keluar/masuk, dan mengajukan pembelian.'],
   ['Ringkasan & stok','<b>Ringkasan</b> menampilkan kondisi gudang. <b>Stok</b> untuk mencari barang; kartu merah berarti hampir habis. Di HP, menu dibuka lewat tombol <b>&#9776;</b>.'],
   ['Scan & catat','Di menu <b>Scan</b>, pilih Keluar atau Masuk, scan barang, lalu isi jumlah. Banyak barang sekaligus? Centang <b>Scan beruntun</b>.'],
   ['Dipinjam','Centang "Akan dikembalikan" saat barang keluar. Saat barang kembali, centang di menu <b>Dipinjam</b> agar stok pulih otomatis.'],
   ['Pembelian','Butuh barang baru? Buka <b>Pembelian</b>, tekan + Permohonan, dan pilih urgensi. Hasilnya akan dikirim ke notifikasimu.']],
+
  staf:[['Selamat datang','Kamu masuk sebagai <b>{role}</b> dengan akses pengelolaan. Berikut hal-hal penting yang perlu kamu tahu.'],
-  ['Barang & QR','Di <b>Stok</b>, tekan + Barang (isi data dan foto). Unduh QR tiap barang, cetak, dan tempel. Punya data Excel? Pakai <b>Impor</b>.'],
+  ['Barang & QR','Di <b>Stok</b>, tekan "+ Barang" (isi data dan foto). Unduh QR tiap barang, cetak, dan tempel. Punya data Excel? Pakai <b>Impor</b>.'],
   ['Keluar & masuk','Pakai <b>Scan</b> untuk mencatat keluar/masuk, termasuk Scan beruntun. Salah input? Buka <b>Riwayat</b> lalu Batalkan transaksi.'],
   ['Dipinjam & opname','<b>Dipinjam</b> memantau barang yang belum kembali. <b>Stok opname</b> mencocokkan hitungan fisik dengan data di aplikasi.'],
-  ['Pembelian & pengguna','<b>Pembelian</b> berisi permohonan dan list belanja (Admin dan PPBK yang menyetujui). Menu <b>Pengguna</b> untuk mengatur role anggota.']]};
+  ['Pembelian & pengguna','<b>Pembelian</b> berisi permohonan dan list belanja (PPBK yang menyetujui). Menu <b>Pengguna</b> untuk mengatur role anggota.']]};
 let gStep=0,gList=[];
 const guideGroup=()=>!isMember()?'relawan':isStaff()?'staf':'logistik';
 function maybeGuide(){
