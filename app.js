@@ -330,13 +330,35 @@ function maybeGuide(){
   try{if(localStorage.getItem(k))return;localStorage.setItem(k,'1')}catch(e){return}
   showGuide();
 }
-function showGuide(){closeSide();gList=GUIDE[guideGroup()];gStep=0;drawGuide()}
+function showGuide(){
+  closeSide();
+  gList=GUIDE[guideGroup()];
+  gStep=0;
+
+  const modal=$('#modal');
+  modal.classList.add('guide-card');
+
+  // Selama guide, klik overlay tidak menutup modal dan tidak diteruskan.
+  modal.onclick=e=>{e.preventDefault();e.stopPropagation()};
+
+  drawGuide();
+}
 function drawGuide(){
   const g=gList[gStep],last=gStep===gList.length-1;
-  openM(`<div class="row sp"><span class="mt">Langkah ${gStep+1} dari ${gList.length}</span><button class="btn s" onclick="closeM()">Lewati</button></div>
+  openM(`<div class="row sp"><span class="mt">Langkah ${gStep+1} dari ${gList.length}</span><button class="btn s" onclick="skipGuide()">Lewati</button></div>
   <h1 style="margin-top:12px">${g[0]}</h1><p style="font-size:16px;line-height:1.55">${g[1].replace('{role}',esc(ROLES[me.role]||me.role))}</p>
   <div class="row" style="justify-content:center;margin:14px 0">${gList.map((_,i)=>`<span style="width:8px;height:8px;border-radius:50%;background:${i===gStep?'var(--ac)':'var(--ln)'}"></span>`).join('')}</div>
-  <div class="row sp">${gStep?'<button class="btn" onclick="gStep--;drawGuide()">Kembali</button>':'<span></span>'}<button class="btn p" onclick="${last?'closeM()':'gStep++;drawGuide()'}">${last?'Selesai':'Berikutnya'}</button></div>`);
+  <div class="row sp">${gStep?'<button class="btn" onclick="gStep--;drawGuide()">Kembali</button>':'<span></span>'}<button class="btn p" onclick="nextGuide()">${last?'Selesai':'Berikutnya'}</button></div>`);
+}
+function nextGuide(){
+  if(gStep<gList.length-1){gStep++;drawGuide()}
+  else skipGuide();
+}
+function skipGuide(){
+  const modal=$('#modal');
+  modal.classList.remove('guide-card');
+  modal.onclick=e=>{if(e.target.id==='modal')closeM()};
+  closeM();
 }
 /* ---------- UNDANGAN, SENTER, CETAK LABEL, SARAN ISIAN ---------- */
 const uniq=k=>[...new Set(items.map(x=>x[k]).filter(Boolean))].sort();
